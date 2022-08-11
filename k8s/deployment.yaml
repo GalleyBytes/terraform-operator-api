@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: terraform-operator-api
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      service: terraform-operator
+      component: api
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        service: terraform-operator
+        component: api
+    spec:
+      containers:
+      - env:
+        - name: PORT
+          value: 0.0.0.0:5001
+        - name: DB_URL
+          # TESTING ONLY VALUES, MUST CHANGE FOR REAL USAGE
+          value: postgres://pg:pass@database.default.svc:5432/crud
+        image: isaaguilar/tfoapiserver:0.0.0
+        imagePullPolicy: IfNotPresent
+        name: api
+        ports:
+        - containerPort: 5001
+          protocol: TCP
+      restartPolicy: Always

@@ -1,22 +1,25 @@
 package api
 
 import (
-	"fmt"
+	"errors"
+	"log"
 	"math"
 	"net/http"
 
 	"github.com/GalleyBytes/terraform-operator-api/pkg/common/models"
 	"github.com/gin-gonic/gin"
+	"gopkg.in/yaml.v3"
+	"gorm.io/gorm"
 )
 
 type Response struct {
-	StatusInfo StatusInfo  `json:"StatusInfo"`
-	Data       interface{} `json:"Data"`
+	StatusInfo StatusInfo  `json:"status_info"`
+	Data       interface{} `json:"data"`
 }
 
 type StatusInfo struct {
-	StatusCode int64  `json:"StatusCode"`
-	Message    string `json:"Message"`
+	StatusCode int64  `json:"status_code"`
+	Message    string `json:"message"`
 }
 
 func response(httpstatus int64, message string, results interface{}) *Response {
@@ -30,41 +33,12 @@ func response(httpstatus int64, message string, results interface{}) *Response {
 	return &resp
 }
 
-func (h handler) GetLog(c *gin.Context) {
-	uuid := c.Param("tfo_resource_uuid")
-	var log models.TFOTaskLog
-
-	if result := h.DB.First(&log, "tfo_resource_uuid = ?", uuid); result.Error != nil {
-		c.AbortWithError(http.StatusNotFound, result.Error)
-		resp := response(http.StatusNotFound, "tfo resource uuid not found", log)
-		c.JSON(int(resp.StatusInfo.StatusCode), &resp)
-		return
-	}
-	resp := response(http.StatusOK, "tfo resource uuid found", log)
-	c.JSON(int(resp.StatusInfo.StatusCode), &resp)
-}
-
-func (h handler) GetLogByGeneration(c *gin.Context) {
-	uuid := c.Param("tfo_resource_uuid")
-	generation := c.Param("generation")
-	var generationLogs []models.TFOTaskLog
-
-	if result := h.DB.Where("generation = ? AND tfo_resource_uuid = ?", &generation, &uuid).Find(&generationLogs); result.Error != nil {
-		c.AbortWithError(http.StatusNotFound, result.Error)
-		resp := response(http.StatusNotFound, "generation logs not found", generationLogs)
-		c.JSON(int(resp.StatusInfo.StatusCode), &resp)
-		return
-	}
-
-	resp := response(http.StatusOK, "generation logs found", generationLogs)
-	c.JSON(int(resp.StatusInfo.StatusCode), &resp)
-
-}
-
 func (h handler) GetDistinctGeneration(c *gin.Context) {
+	// The TFOResourceSpec is created once for each generation that passes thru the monitor. It is the best
+	// resource to query for generations of a particular resource.
 	uuid := c.Param("tfo_resource_uuid")
 	var generation []int
-	if result := h.DB.Raw("SELECT DISTINCT generation FROM tfo_task_logs WHERE tfo_resource_uuid = ?", &uuid).Scan(&generation); result.Error != nil {
+	if result := h.DB.Raw("SELECT DISTINCT generation FROM tfo_resource_specs WHERE tfo_resource_uuid = ?", &uuid).Scan(&generation); result.Error != nil {
 		c.AbortWithError(http.StatusNotFound, result.Error)
 		return
 	}
@@ -89,6 +63,9 @@ func (h handler) GeIdByClusterName(c *gin.Context) {
 	var clusterNameInfo models.Cluster
 
 	if result := h.DB.Where("name = ?", clusterName).First(&clusterNameInfo); result.Error != nil {
+		// TODO should not return a error status code just because the database is missing this data. Must
+		// do better error handling here. (This applies in lots of other places in the code, I just wanted
+		// to officially make a todo item to clean up the api)
 		c.AbortWithError(http.StatusNotFound, result.Error)
 		return
 	}
@@ -97,15 +74,9 @@ func (h handler) GeIdByClusterName(c *gin.Context) {
 
 }
 
-func (h handler) GetRecords(c *gin.Context) {
-	var records []models.TFOResource
-
-	if result := h.DB.Find(&records); result.Error != nil {
-		c.AbortWithError(http.StatusNotFound, result.Error)
-		return
-	}
-
-	c.JSON(http.StatusOK, &records)
+func (h handler) Index(c *gin.Context) {
+	// TODO return api discovery data
+	c.JSON(http.StatusNoContent, nil)
 }
 
 func (h handler) GetClusters(c *gin.Context) {
@@ -143,25 +114,13 @@ func (h handler) GetResourceByUUID(c *gin.Context) {
 	c.JSON(http.StatusOK, &tfoResource)
 }
 
-// func (h handler) GetResourceLogsByUUID(c *gin.Context) {
-// 	var tfoResource models.TFOTaskLog
-// 	uuid := c.Param("tfo_resource_uuid")
-
-// 	if result := h.DB.First(&tfoResource, "uuid = ?", uuid); result.Error != nil {
-// 		c.AbortWithError(http.StatusNotFound, result.Error)
-// 		return
-// 	}
-
-// 	c.JSON(http.StatusOK, &tfoResource)
-// }
-
-func highestRerun(taskLogs []models.TFOTaskLog, taskType string, minimum float64) ([]models.TFOTaskLog, float64) {
-	logs := []models.TFOTaskLog{}
+func highestRerun(taskPods []models.TaskPod, taskType string, minimum float64) (models.TaskPod, float64) {
+	taskPodOfHighestRerun := models.TaskPod{}
 	highestRerunObservedInLogs := 0
-	for _, taskLog := range taskLogs {
-		if taskLog.TaskType == taskType {
-			if taskLog.Rerun > highestRerunObservedInLogs {
-				highestRerunObservedInLogs = taskLog.Rerun
+	for _, taskPod := range taskPods {
+		if taskPod.TaskType == taskType {
+			if taskPod.Rerun > highestRerunObservedInLogs {
+				highestRerunObservedInLogs = taskPod.Rerun
 			}
 		}
 	}
@@ -169,38 +128,58 @@ func highestRerun(taskLogs []models.TFOTaskLog, taskType string, minimum float64
 	// return only the highest rerun. It is ok to return an empty list, this just indicates that the task
 	// has not produced logs yet.
 	rerun := math.Max(float64(highestRerunObservedInLogs), minimum)
-	for _, taskLog := range taskLogs {
-		if taskLog.TaskType == taskType && taskLog.Rerun == int(rerun) {
-			logs = append(logs, taskLog)
+	for _, taskPod := range taskPods {
+		if taskPod.TaskType == taskType && taskPod.Rerun == int(rerun) {
+			taskPodOfHighestRerun = taskPod
 		}
 	}
-	return logs, rerun
+	return taskPodOfHighestRerun, rerun
 }
 
-func (h handler) GetClustersResourcesLogs(c *gin.Context) {
-	var logs []models.TFOTaskLog
+func (h handler) LatestGeneration(uuid string) string {
 	var tfoResource models.TFOResource
-	//clusterID := c.Param("cluster")
-	generation := c.Param("generation")
+	if result := h.DB.First(&tfoResource, "uuid = ?", &uuid); result.Error != nil {
+		return ""
+	}
+	return tfoResource.CurrentGeneration
+}
+
+// GetClustersResourcesLogsResponseData data contract for clients to consume
+type GetClustersResourcesLogsResponseData struct {
+	ID              uint   `json:"id"`
+	LogMessage      string `json:"message"`
+	TaskType        string `json:"task_type"`
+	Rerun           int    `json:"rerun"`
+	LineNo          string `json:"line_no"`
+	TFOResourceUUID string `json:"tfo_resource_uuid"`
+}
+
+// GetClustersResourceLogs will return the latest logs for the selected resource. The only filted allowed
+// in this call is the generation to switch getting the latest logs for a given generation.
+func (h handler) GetClustersResourcesLogs(c *gin.Context) {
+	var taskPods []models.TaskPod
+
+	// URL param arguments expected. These are used to construct the url and are always expected to contain a string
+	generationFilter := c.Param("generation")
+	taskTypeFilter := c.Param("task_type")
+	rerunFilter := c.Param("rerun")
 	uuid := c.Param("tfo_resource_uuid")
 
-	// if result := h.DB.Where("cluster_id = ?", clusterID).Find(&tfoResource); result.Error != nil {
-	// 	c.AbortWithError(http.StatusNotFound, result.Error)
-	// 	return
-	// }
-	// uuid := tfoResource.UUID
+	if generationFilter == "latest" || generationFilter == "" {
+		// "latest" is a special case that reads the 'CurrentGeneration' value out of TFOResource
+		generationFilter = h.LatestGeneration(uuid)
+	}
 
-	if generation == "latest" {
-		if result := h.DB.First(&tfoResource, "uuid = ?", &uuid); result.Error != nil {
+	if rerunFilter != "" {
+		if result := h.DB.Where("tfo_resource_uuid = ? AND generation = ? AND rerun = ?", &uuid, &generationFilter, &rerunFilter).Find(&taskPods); result.Error != nil {
 			c.AbortWithError(http.StatusNotFound, result.Error)
 			return
 		}
-		generation = tfoResource.CurrentGeneration
-	}
-
-	if result := h.DB.Where("tfo_resource_uuid = ? AND generation = ?", &uuid, &generation).Find(&logs); result.Error != nil {
-		c.AbortWithError(http.StatusNotFound, result.Error)
-		return
+	} else {
+		if result := h.DB.Where("tfo_resource_uuid = ? AND generation = ?", &uuid, &generationFilter).Find(&taskPods); result.Error != nil {
+			c.AbortWithError(http.StatusNotFound, result.Error)
+			return
+		}
 	}
 
 	// We've retrieved all the logs for the generation at this point, but we need to ensure we only display
@@ -212,11 +191,11 @@ func (h handler) GetClustersResourcesLogs(c *gin.Context) {
 	//
 	//    9 |                       |
 	//    8 |                       |
-	// N  7 |   Good Results        |   Bad result becuase the apply log
-	// U  6 |                       |   doesn't reflect the result of plan
+	// R  7 |   Good Results        |   Bad result becuase the apply log
+	// E  6 |                       |   doesn't reflect the result of plan
 	// R  5 |                       |
-	// E  4 |                       |             x
-	// R  3 |         x   x         |                x
+	// U  4 |                       |             x
+	// N  3 |         x   x         |                x
 	//    2 |                       |
 	//    1 |    x                  |        x
 	//    0 |_x_____________________|____x________________________
@@ -227,7 +206,7 @@ func (h handler) GetClustersResourcesLogs(c *gin.Context) {
 	//   s           a               s           a
 
 	// Create this in order to store the logs filtered by the rerun sort
-	filteredResuilts := []models.TFOTaskLog{}
+	// filteredResuilts := []models.TFOTaskLog{}
 
 	// Log order:
 	taskTypesInOrder := []string{
@@ -243,93 +222,206 @@ func (h handler) GetClustersResourcesLogs(c *gin.Context) {
 		"postapply",
 	}
 
+	taskPodsOfHighestRerun := []models.TaskPod{}
 	currentRerun := float64(0)
-	for _, taskLog := range taskTypesInOrder {
-		highestRerunLogs, rerun := highestRerun(logs, taskLog, currentRerun)
-		filteredResuilts = append(filteredResuilts, highestRerunLogs...)
+	for _, taskType := range taskTypesInOrder {
+		taskPod, rerun := highestRerun(taskPods, taskType, currentRerun)
 		currentRerun = rerun
+		if taskTypeFilter != "" && taskPod.TaskType != taskTypeFilter {
+			continue
+		}
+		taskPodsOfHighestRerun = append(taskPodsOfHighestRerun, taskPod)
 	}
 
-	c.JSON(http.StatusOK, &filteredResuilts)
+	// Find all the tfoTaskLogs that were created from the taskPods
+	taskPodUUIDs := []string{}
+	for _, t := range taskPodsOfHighestRerun {
+		taskPodUUIDs = append(taskPodUUIDs, t.UUID)
+	}
+	var tfoTaskLogs []models.TFOTaskLog
+	if result := h.DB.Where("tfo_resource_uuid = ? AND task_pod_uuid IN ?", &uuid, taskPodUUIDs).Find(&tfoTaskLogs); result.Error != nil {
+		c.AbortWithError(http.StatusNotFound, result.Error)
+		return
+	}
+
+	logs := []GetClustersResourcesLogsResponseData{}
+	// TODO optimize the taskPod/taskLog matching algorithm, leaving this simple lookup since logs are
+	// unlikely to be more than just a few thousand lines max. This number should be easily handled.
+	for _, taskPod := range taskPodsOfHighestRerun {
+		for _, log := range tfoTaskLogs {
+			if log.TaskPodUUID == taskPod.UUID {
+				logs = append(logs, GetClustersResourcesLogsResponseData{
+					ID:              log.ID,
+					LogMessage:      log.Message,
+					LineNo:          log.LineNo,
+					Rerun:           taskPod.Rerun,
+					TaskType:        taskPod.TaskType,
+					TFOResourceUUID: log.TFOResourceUUID,
+				})
+			}
+		}
+	}
+
+	c.JSON(http.StatusOK, response(http.StatusOK, "", logs))
 }
 
-func (h handler) GetRerunByNumber(c *gin.Context) {
-	uuid := c.Param("tfo_resource_uuid")
-	taskType := c.Param("task_type")
-	generation := c.Param("generation")
-	var rerunNumbers []models.TFOTaskLog
-	rerunValue := c.Param("rerun_value")
+func (h handler) LookupResourceSpec(generation, uuid string) *models.TFOResourceSpec {
 	var tfoResource models.TFOResource
-	//todo query for latest
+	var tfoResourceSpec models.TFOResourceSpec
 
 	if generation == "latest" {
 		if result := h.DB.First(&tfoResource, "uuid = ?", &uuid); result.Error != nil {
-			c.AbortWithError(http.StatusNotFound, result.Error)
-			return
+			return nil
 		}
 		generation = tfoResource.CurrentGeneration
 	}
 
-	if result := h.DB.Where("task_type = ? AND tfo_resource_uuid = ? AND rerun = ? AND generation = ?", &taskType, &uuid, &rerunValue, &generation).Find(&rerunNumbers); result.Error != nil {
-		c.AbortWithError(http.StatusNotFound, result.Error)
-		return
+	if result := h.DB.Where("tfo_resource_uuid = ? AND generation =?", uuid, generation).First(&tfoResourceSpec); result.Error != nil {
+		return nil
 	}
 
-	c.JSON(http.StatusOK, &rerunNumbers)
+	return &tfoResourceSpec
 }
 
-func (h handler) GetHighestRerunLog(c *gin.Context) {
-	generation := c.Param("generation")
-	var maxRerun int
-
-	if result := h.DB.Raw("SELECT MAX(rerun) FROM tfo_task_logs WHERE generation = ?", &generation).Scan(&maxRerun); result.Error != nil {
-		c.AbortWithError(http.StatusNotFound, result.Error)
-		return
-	}
-	c.JSON(http.StatusOK, &maxRerun)
-}
-
-func (h handler) GetHighestRerunLogForTFO(c *gin.Context) {
-	uuid := c.Param("tfo_resource_uuid")
-	var init models.TFOTaskLog
-	var setup models.TFOTaskLog
-
-	if result := h.DB.Raw("SELECT * FROM tfo_task_logs WHERE tfo_resource_uuid = ? AND task_type = 'init' AND rerun = (select MAX(rerun) from tfo_task_logs)", &uuid).Scan(&init); result.Error != nil {
-		//if result := h.DB.Raw("SELECT MAX(rerun) FROM tfo_task_logs WHERE tfo_resource_uuid = ?", &uuid).Scan(&maxRerun); result.Error != nil {
-		c.AbortWithError(http.StatusNotFound, result.Error)
-		return
-	}
-	fmt.Println(init)
-	c.JSON(http.StatusOK, &init)
-
-	// SELECT * FROM tfo_task_logs WHERE tfo_resource_uuid = '3ee03fd7-d7ac-4fbd-8c4c-d573bc7360ef' AND rerun = (select MAX(rerun) from tfo_task_logs);
-	if result := h.DB.Raw("SELECT * FROM tfo_task_logs WHERE tfo_resource_uuid = ? AND task_type = 'setup' AND rerun = (select MAX(rerun) from tfo_task_logs)", &uuid).Scan(&setup); result.Error != nil {
-		//if result := h.DB.Raw("SELECT MAX(rerun) FROM tfo_task_logs WHERE tfo_resource_uuid = ?", &uuid).Scan(&maxRerun); result.Error != nil {
-		c.AbortWithError(http.StatusNotFound, result.Error)
-		return
-	}
-	fmt.Println(setup)
-	c.JSON(http.StatusOK, &setup)
+type GetResourceSpecResponseData struct {
+	models.TFOResourceSpec `json:",inline"`
 }
 
 func (h handler) GetResourceSpec(c *gin.Context) {
 	uuid := c.Param("tfo_resource_uuid")
 	generation := c.Param("generation")
-	var tfoResource models.TFOResource
-	var tfoResourcespec []models.TFOResourceSpec
+	tfoResourceSpec := h.LookupResourceSpec(generation, uuid)
 
-	if generation == "latest" {
-		if result := h.DB.First(&tfoResource, "uuid = ?", &uuid); result.Error != nil {
-			c.AbortWithError(http.StatusNotFound, result.Error)
-			return
-		}
-		generation = tfoResource.CurrentGeneration
+	responseData := []interface{}{}
+	if tfoResourceSpec != nil {
+		responseData = append(responseData, GetResourceSpecResponseData{TFOResourceSpec: *tfoResourceSpec})
+	}
+	c.JSON(http.StatusOK, &responseData)
+}
+
+type GetApprovalStatusResponseData struct {
+	TFOResourceUUID string `json:"tfo_resource_uuid"`
+	TaskPodUUID     string `json:"task_pod_uuid"`
+
+	// Status is fuzzy. -1 means it hasn't been decided, 0 is false, 1 is true for the approvals.
+	// Hasn't been decided means there is no record in the approvals table matching the uuid.
+	Status int `json:"status"`
+}
+
+// GetApprovalStatus only looks at the latest resource spec by getting the TFOResource's 'LatestGeneration'.
+// Use the generation to get the TFOResourceSpec and parses the "spec" for the requireApproval value. If the
+// value is "true", this function finds the latest plan task by getting the TaskPod with the highest rerun number.
+// The UUID of the TaskPod is used to lookup the Approval status to return to the caller.
+func (h handler) GetApprovalStatus(c *gin.Context) {
+	responseData := []interface{}{}
+	uuid := c.Param("tfo_resource_uuid")
+
+	generationFilter := c.Param("generation")
+	generation := generationFilter
+	if generationFilter == "" || generationFilter == "latest" {
+		generation = h.LatestGeneration(uuid)
 	}
 
-	if result := h.DB.Where("tfo_resource_uuid = ? AND generation =?", uuid, generation).Find(&tfoResourcespec); result.Error != nil {
-		c.AbortWithError(http.StatusNotFound, result.Error)
+	tfoResourceSpec := h.LookupResourceSpec(generation, uuid)
+	if tfoResourceSpec == nil {
+		// TODO What's the error messsage?
+		c.JSON(http.StatusOK, responseData)
 		return
 	}
 
-	c.JSON(http.StatusOK, &tfoResourcespec)
+	spec := struct {
+		RequireApproval bool `yaml:"requireApproval"`
+	}{}
+
+	err := yaml.Unmarshal([]byte(tfoResourceSpec.ResourceSpec), &spec)
+	if err != nil {
+		// TODO What's the error messsage?
+		c.JSON(http.StatusOK, responseData)
+		return
+	}
+
+	if !spec.RequireApproval {
+		// TODO what's the message when no require approval is required?
+		c.JSON(http.StatusOK, responseData)
+		return
+	}
+
+	taskType := "plan"
+	taskPods := []models.TaskPod{}
+	if result := h.DB.Where("tfo_resource_uuid = ? AND generation = ? AND task_type = ?", &uuid, &generation, &taskType).Find(&taskPods); result.Error != nil {
+		// TODO No plans have been executed yet. This is not an error but we are not able to continue until the plan pod shows up.
+		c.JSON(http.StatusOK, responseData)
+		return
+	}
+	taskPod, _ := highestRerun(taskPods, taskType, 0)
+
+	status := -1
+	approval := models.Approval{}
+	if result := h.DB.Where("task_pod_uuid = ?", &taskPod.UUID).First(&approval); result.Error != nil {
+		// TODO handle error not related to does not exist
+		c.JSON(http.StatusOK, GetApprovalStatusResponseData{
+			TFOResourceUUID: uuid,
+			TaskPodUUID:     taskPod.UUID,
+			Status:          status,
+		})
+		return
+	}
+	// TODO What is the approval status response structure going to look like?
+	if approval.IsApproved {
+		status = 1
+	} else {
+		status = 0
+	}
+	c.JSON(http.StatusOK, GetApprovalStatusResponseData{
+		TFOResourceUUID: uuid,
+		TaskPodUUID:     taskPod.UUID,
+		Status:          status,
+	})
+
+}
+
+// UpdateApproval takes the uuid and a JSON data param and create a row in the approval table.
+func (h handler) UpdateApproval(c *gin.Context) {
+	uuid := c.Param("task_pod_uuid")
+
+	type Approval struct {
+		IsApproved bool `json:"is_approved"`
+	}
+	approvalData := new(Approval)
+	err := c.BindJSON(approvalData)
+	if err != nil {
+		// TODO send message that data is missing or whatever bindjson error returns
+		c.JSON(http.StatusNotAcceptable, nil)
+		return
+	}
+
+	log.Print(approvalData)
+
+	approval := models.Approval{}
+	if result := h.DB.Where("task_pod_uuid = ?", &uuid).First(&approval); result.Error == nil {
+		// TODO Approval is already set, user should be informed
+		c.JSON(http.StatusNoContent, nil)
+		return
+	} else {
+		if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			// TODO Something unexpected happened
+			c.JSON(http.StatusBadRequest, nil)
+			return
+		}
+	}
+
+	approval = models.Approval{
+		IsApproved:  approvalData.IsApproved,
+		TaskPodUUID: uuid,
+	}
+
+	createResult := h.DB.Create(&approval)
+	if createResult.Error != nil {
+		// TODO Something unexpected happened
+		c.JSON(http.StatusBadRequest, nil)
+		return
+	}
+
+	c.JSON(http.StatusNoContent, nil)
+
 }

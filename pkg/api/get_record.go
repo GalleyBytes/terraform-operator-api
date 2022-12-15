@@ -1,13 +1,16 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"log"
 	"math"
 	"net/http"
+	"time"
 
 	"github.com/GalleyBytes/terraform-operator-api/pkg/common/models"
 	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
 	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
 )
@@ -144,8 +147,8 @@ func (h handler) LatestGeneration(uuid string) string {
 	return tfoResource.CurrentGeneration
 }
 
-// GetClustersResourcesLogsResponseData data contract for clients to consume
-type GetClustersResourcesLogsResponseData struct {
+// ResourceLogs data contract for clients to consume
+type ResourceLogs struct {
 	ID              uint   `json:"id"`
 	LogMessage      string `json:"message"`
 	TaskType        string `json:"task_type"`
@@ -157,7 +160,6 @@ type GetClustersResourcesLogsResponseData struct {
 // GetClustersResourceLogs will return the latest logs for the selected resource. The only filted allowed
 // in this call is the generation to switch getting the latest logs for a given generation.
 func (h handler) GetClustersResourcesLogs(c *gin.Context) {
-	var taskPods []models.TaskPod
 
 	// URL param arguments expected. These are used to construct the url and are always expected to contain a string
 	generationFilter := c.Param("generation")
@@ -165,20 +167,29 @@ func (h handler) GetClustersResourcesLogs(c *gin.Context) {
 	rerunFilter := c.Param("rerun")
 	uuid := c.Param("tfo_resource_uuid")
 
+	logs, err := h.ResourceLogs(generationFilter, rerunFilter, taskTypeFilter, uuid)
+	if err != nil {
+		c.AbortWithError(http.StatusNotFound, err)
+	}
+
+	c.JSON(http.StatusOK, response(http.StatusOK, "", logs))
+}
+
+func (h handler) ResourceLogs(generationFilter, rerunFilter, taskTypeFilter, uuid string) ([]ResourceLogs, error) {
+	logs := []ResourceLogs{}
 	if generationFilter == "latest" || generationFilter == "" {
 		// "latest" is a special case that reads the 'CurrentGeneration' value out of TFOResource
 		generationFilter = h.LatestGeneration(uuid)
 	}
 
+	var taskPods []models.TaskPod
 	if rerunFilter != "" {
 		if result := h.DB.Where("tfo_resource_uuid = ? AND generation = ? AND rerun = ?", &uuid, &generationFilter, &rerunFilter).Find(&taskPods); result.Error != nil {
-			c.AbortWithError(http.StatusNotFound, result.Error)
-			return
+			return logs, result.Error
 		}
 	} else {
 		if result := h.DB.Where("tfo_resource_uuid = ? AND generation = ?", &uuid, &generationFilter).Find(&taskPods); result.Error != nil {
-			c.AbortWithError(http.StatusNotFound, result.Error)
-			return
+			return logs, result.Error
 		}
 	}
 
@@ -240,17 +251,15 @@ func (h handler) GetClustersResourcesLogs(c *gin.Context) {
 	}
 	var tfoTaskLogs []models.TFOTaskLog
 	if result := h.DB.Where("tfo_resource_uuid = ? AND task_pod_uuid IN ?", &uuid, taskPodUUIDs).Find(&tfoTaskLogs); result.Error != nil {
-		c.AbortWithError(http.StatusNotFound, result.Error)
-		return
+		return logs, result.Error
 	}
 
-	logs := []GetClustersResourcesLogsResponseData{}
 	// TODO optimize the taskPod/taskLog matching algorithm, leaving this simple lookup since logs are
 	// unlikely to be more than just a few thousand lines max. This number should be easily handled.
 	for _, taskPod := range taskPodsOfHighestRerun {
 		for _, log := range tfoTaskLogs {
 			if log.TaskPodUUID == taskPod.UUID {
-				logs = append(logs, GetClustersResourcesLogsResponseData{
+				logs = append(logs, ResourceLogs{
 					ID:              log.ID,
 					LogMessage:      log.Message,
 					LineNo:          log.LineNo,
@@ -261,8 +270,7 @@ func (h handler) GetClustersResourcesLogs(c *gin.Context) {
 			}
 		}
 	}
-
-	c.JSON(http.StatusOK, response(http.StatusOK, "", logs))
+	return logs, nil
 }
 
 func (h handler) LookupResourceSpec(generation, uuid string) *models.TFOResourceSpec {
@@ -423,5 +431,106 @@ func (h handler) UpdateApproval(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusNoContent, nil)
+
+}
+
+type SocketListener struct {
+	Connection  *websocket.Conn
+	IsListening bool
+	EventType   chan int
+	Message     []byte
+	Err         error
+}
+
+// Listen runs a background function and returns a response on the EventType channel.
+func (s *SocketListener) Listen() {
+	if s.IsListening {
+		return
+	}
+	s.IsListening = true
+	s.EventType = make(chan int)
+	go func() {
+		t, msg, err := s.Connection.ReadMessage()
+		s.Message = []byte(msg)
+		s.Err = err
+		s.IsListening = false
+		s.EventType <- t
+	}()
+}
+
+func (h handler) ResourceLogWatcher(c *gin.Context) {
+	tfoResourceUUID := c.Param("tfo_resource_uuid")
+	_ = tfoResourceUUID
+
+	var wsupgrader = websocket.Upgrader{
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+	}
+	// how can i make this more secure?
+	wsupgrader.CheckOrigin = func(r *http.Request) bool { return true }
+
+	conn, err := wsupgrader.Upgrade(c.Writer, c.Request, nil)
+	if err != nil {
+		log.Printf("Failed to set websocket upgrade: %+v", err)
+		return
+	}
+	defer conn.Close()
+
+	s := SocketListener{Connection: conn}
+	s.Listen()
+
+	taskLog := models.TFOTaskLog{}
+	if result := h.DB.Last(&taskLog); result.Error != nil {
+		return
+	}
+	lastTaskLogID := taskLog.ID
+
+	logs, err := h.ResourceLogs("", "", "", tfoResourceUUID)
+	if err != nil {
+		return
+	}
+	b, err := json.Marshal(logs)
+	if err != nil {
+		// Why did it fail?
+		return
+	}
+	conn.WriteMessage(1, b)
+	for {
+		select {
+		case i := <-s.EventType:
+			if i == -1 {
+				log.Println("Closing socket: client is going away")
+				return
+			}
+			if s.Err != nil {
+				log.Printf("An error was sent in the socket event: %s", s.Err.Error())
+			}
+			log.Printf("The event sent was: %s. Listening for next event...", string(s.Message))
+			s.Listen()
+
+		case <-time.Tick(1 * time.Second):
+			taskLog := models.TFOTaskLog{}
+			if result := h.DB.Last(&taskLog); result.Error != nil {
+				return
+			}
+			if lastTaskLogID == taskLog.ID {
+				// NOISE --> log.Println("No new logs. Last log id is ", lastTaskLogID)
+				continue
+			}
+
+			logs, err := h.ResourceLogs("", "", "", tfoResourceUUID)
+			if err != nil {
+				// Why did it fail?
+				return
+			}
+			b, err := json.Marshal(logs)
+			if err != nil {
+				// Why did it fail?
+				return
+			}
+			conn.WriteMessage(1, b)
+			lastTaskLogID = taskLog.ID
+		}
+	}
 
 }

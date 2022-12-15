@@ -34,4 +34,8 @@ func RegisterRoutes(r *gin.Engine, db *gorm.DB) {
 	// Approval
 	routes.GET("/resource/:tfo_resource_uuid/approval-status", h.GetApprovalStatus)
 	routes.POST("/approval/:task_pod_uuid", h.UpdateApproval)
+
+	// Websockets will be prefixed with /ws
+	sockets := r.Group("/ws/")
+	sockets.GET("/:tfo_resource_uuid", h.ResourceLogWatcher)
 }

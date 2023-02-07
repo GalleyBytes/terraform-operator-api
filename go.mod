@@ -1,9 +1,10 @@
-module github.com/GalleyBytes/terraform-operator-api
+module github.com/galleybytes/terraform-operator-api
 
 go 1.19
 
 require (
 	github.com/gin-gonic/gin v1.8.1
+	github.com/golang-jwt/jwt/v4 v4.4.3
 	github.com/spf13/viper v1.12.0
 	gorm.io/driver/postgres v1.3.9
 	gorm.io/gorm v1.23.8
@@ -50,5 +51,5 @@ require (
 	google.golang.org/protobuf v1.28.1 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
+	gopkg.in/yaml.v3 v3.0.1
 )

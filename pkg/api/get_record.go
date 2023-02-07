@@ -3,12 +3,13 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"math"
 	"net/http"
 	"time"
 
-	"github.com/GalleyBytes/terraform-operator-api/pkg/common/models"
+	"github.com/galleybytes/terraform-operator-api/pkg/common/models"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"gopkg.in/yaml.v3"
@@ -61,19 +62,24 @@ func (h handler) GetUuidByClusterID(c *gin.Context) {
 
 }
 
-func (h handler) GeIdByClusterName(c *gin.Context) {
+func (h handler) GetCluster(c *gin.Context) {
+	clusterID := c.Param("cluster_id")
+	if clusterID == "" {
+		// ID must be integer-like
+		clusterID = "-1" // will hopefully never match a primary key
+	}
 	clusterName := c.Param("cluster_name")
-	var clusterNameInfo models.Cluster
-
-	if result := h.DB.Where("name = ?", clusterName).First(&clusterNameInfo); result.Error != nil {
-		// TODO should not return a error status code just because the database is missing this data. Must
-		// do better error handling here. (This applies in lots of other places in the code, I just wanted
-		// to officially make a todo item to clean up the api)
-		c.AbortWithError(http.StatusNotFound, result.Error)
-		return
+	var clusters []models.Cluster
+	responseMsg := ""
+	if result := h.DB.Where("name = ?", clusterName).Or("id = ?", clusterID).First(&clusters); result.Error != nil {
+		if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, result.Error.Error(), clusters))
+			return
+		}
+		responseMsg = result.Error.Error()
 	}
 
-	c.JSON(http.StatusOK, &clusterNameInfo)
+	c.JSON(http.StatusOK, response(http.StatusOK, responseMsg, clusters))
 
 }
 
@@ -82,7 +88,7 @@ func (h handler) Index(c *gin.Context) {
 	c.JSON(http.StatusNoContent, nil)
 }
 
-func (h handler) GetClusters(c *gin.Context) {
+func (h handler) ListClusters(c *gin.Context) {
 	var clusters []models.Cluster
 
 	if result := h.DB.Find(&clusters); result.Error != nil {
@@ -106,15 +112,18 @@ func (h handler) GetClustersResources(c *gin.Context) {
 }
 
 func (h handler) GetResourceByUUID(c *gin.Context) {
-	var tfoResource models.TFOResource
+	var tfoResources []models.TFOResource
 	uuid := c.Param("tfo_resource_uuid")
-
-	if result := h.DB.First(&tfoResource, "uuid = ?", uuid); result.Error != nil {
-		c.AbortWithError(http.StatusNotFound, result.Error)
-		return
+	responseMsg := ""
+	if result := h.DB.First(&tfoResources, "uuid = ?", uuid); result.Error != nil {
+		if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, result.Error.Error(), tfoResources))
+			return
+		}
+		responseMsg = result.Error.Error()
 	}
 
-	c.JSON(http.StatusOK, &tfoResource)
+	c.JSON(http.StatusOK, response(http.StatusOK, responseMsg, tfoResources))
 }
 
 func highestRerun(taskPods []models.TaskPod, taskType string, minimum float64) (models.TaskPod, float64) {
@@ -147,8 +156,8 @@ func (h handler) LatestGeneration(uuid string) string {
 	return tfoResource.CurrentGeneration
 }
 
-// ResourceLogs data contract for clients to consume
-type ResourceLogs struct {
+// ResourceLog data contract for clients to consume
+type ResourceLog struct {
 	ID              uint   `json:"id"`
 	LogMessage      string `json:"message"`
 	TaskType        string `json:"task_type"`
@@ -175,8 +184,8 @@ func (h handler) GetClustersResourcesLogs(c *gin.Context) {
 	c.JSON(http.StatusOK, response(http.StatusOK, "", logs))
 }
 
-func (h handler) ResourceLogs(generationFilter, rerunFilter, taskTypeFilter, uuid string) ([]ResourceLogs, error) {
-	logs := []ResourceLogs{}
+func (h handler) ResourceLogs(generationFilter, rerunFilter, taskTypeFilter, uuid string) ([]ResourceLog, error) {
+	logs := []ResourceLog{}
 	if generationFilter == "latest" || generationFilter == "" {
 		// "latest" is a special case that reads the 'CurrentGeneration' value out of TFOResource
 		generationFilter = h.LatestGeneration(uuid)
@@ -259,7 +268,7 @@ func (h handler) ResourceLogs(generationFilter, rerunFilter, taskTypeFilter, uui
 	for _, taskPod := range taskPodsOfHighestRerun {
 		for _, log := range tfoTaskLogs {
 			if log.TaskPodUUID == taskPod.UUID {
-				logs = append(logs, ResourceLogs{
+				logs = append(logs, ResourceLog{
 					ID:              log.ID,
 					LogMessage:      log.Message,
 					LineNo:          log.LineNo,
@@ -271,6 +280,21 @@ func (h handler) ResourceLogs(generationFilter, rerunFilter, taskTypeFilter, uui
 		}
 	}
 	return logs, nil
+}
+
+func (h handler) GetTFOTaskLogsViaTask(c *gin.Context) {
+	emptyResponse := []interface{}{}
+	taskPodUUID := c.Param("task_pod_uuid")
+
+	var tfoTaskLogs []models.TFOTaskLog
+	if result := h.DB.Where("task_pod_uuid = ?", taskPodUUID).Find(&tfoTaskLogs); result.Error != nil {
+
+		// TODO No plans have been executed yet. This is not an error but we are not able to continue until the plan pod shows up.
+		c.JSON(http.StatusOK, response(http.StatusOK, "TaskPod "+result.Error.Error(), emptyResponse))
+		return
+	}
+
+	c.JSON(http.StatusOK, response(http.StatusOK, "", tfoTaskLogs))
 }
 
 func (h handler) LookupResourceSpec(generation, uuid string) *models.TFOResourceSpec {
@@ -316,6 +340,62 @@ type GetApprovalStatusResponseData struct {
 	Status int `json:"status"`
 }
 
+func (h handler) GetTaskPod(c *gin.Context) {
+	responseData := []interface{}{}
+	taskPodUUID := c.Param("task_pod_uuid")
+	taskPods := []models.TaskPod{}
+	if result := h.DB.Where("uuid = ?", &taskPodUUID).Find(&taskPods); result.Error != nil {
+		// TODO No plans have been executed yet. This is not an error but we are not able to continue until the plan pod shows up.
+		c.JSON(http.StatusOK, response(http.StatusOK, result.Error.Error(), responseData))
+		return
+	}
+	c.JSON(http.StatusOK, response(http.StatusOK, "", taskPods))
+}
+
+func (h handler) AllApprovals(c *gin.Context) {
+	approval := []models.Approval{}
+	h.DB.Last(&approval)
+	c.JSON(http.StatusOK, response(http.StatusOK, "", approval))
+}
+
+func (h handler) GetApprovalStatusViaTaskPodUUID(c *gin.Context) {
+	responseData := []interface{}{}
+	taskPodUUID := c.Param("task_pod_uuid")
+	taskPod := models.TaskPod{}
+	if result := h.DB.Where("uuid = ?", &taskPodUUID).Find(&taskPod); result.Error != nil {
+		// TODO No plans have been executed yet. This is not an error but we are not able to continue until the plan pod shows up.
+		c.JSON(http.StatusOK, response(http.StatusOK, "TaskPod "+result.Error.Error(), responseData))
+		return
+	}
+	if taskPod.TaskType != "plan" {
+		// TODO what's the message
+		c.JSON(http.StatusOK, response(http.StatusOK, fmt.Sprintf("approvals are for plan types, but uuid was for %s type", taskPod.TaskType), responseData))
+		return
+	}
+
+	status := -1
+	approval := models.Approval{}
+	if result := h.DB.Where("task_pod_uuid = ?", &taskPod.UUID).First(&approval); result.Error != nil {
+		// TODO handle error not related to does not exist
+		c.JSON(http.StatusOK, response(http.StatusOK, "Approval "+result.Error.Error(), responseData))
+		return
+	}
+
+	if approval.IsApproved {
+		status = 1
+	} else {
+		status = 0
+	}
+
+	c.JSON(http.StatusOK, response(http.StatusOK, "", []GetApprovalStatusResponseData{
+		{
+			TFOResourceUUID: taskPod.TFOResourceUUID,
+			TaskPodUUID:     taskPod.UUID,
+			Status:          status,
+		},
+	}))
+}
+
 // GetApprovalStatus only looks at the latest resource spec by getting the TFOResource's 'LatestGeneration'.
 // Use the generation to get the TFOResourceSpec and parses the "spec" for the requireApproval value. If the
 // value is "true", this function finds the latest plan task by getting the TaskPod with the highest rerun number.
@@ -333,7 +413,7 @@ func (h handler) GetApprovalStatus(c *gin.Context) {
 	tfoResourceSpec := h.LookupResourceSpec(generation, uuid)
 	if tfoResourceSpec == nil {
 		// TODO What's the error messsage?
-		c.JSON(http.StatusOK, responseData)
+		c.JSON(http.StatusOK, response(http.StatusOK, "", responseData))
 		return
 	}
 
@@ -343,14 +423,13 @@ func (h handler) GetApprovalStatus(c *gin.Context) {
 
 	err := yaml.Unmarshal([]byte(tfoResourceSpec.ResourceSpec), &spec)
 	if err != nil {
-		// TODO What's the error messsage?
-		c.JSON(http.StatusOK, responseData)
+		c.JSON(http.StatusOK, response(http.StatusOK, err.Error(), responseData))
 		return
 	}
 
 	if !spec.RequireApproval {
 		// TODO what's the message when no require approval is required?
-		c.JSON(http.StatusOK, responseData)
+		c.JSON(http.StatusOK, response(http.StatusOK, "", responseData))
 		return
 	}
 
@@ -358,7 +437,7 @@ func (h handler) GetApprovalStatus(c *gin.Context) {
 	taskPods := []models.TaskPod{}
 	if result := h.DB.Where("tfo_resource_uuid = ? AND generation = ? AND task_type = ?", &uuid, &generation, &taskType).Find(&taskPods); result.Error != nil {
 		// TODO No plans have been executed yet. This is not an error but we are not able to continue until the plan pod shows up.
-		c.JSON(http.StatusOK, responseData)
+		c.JSON(http.StatusOK, response(http.StatusOK, "", responseData))
 		return
 	}
 	taskPod, _ := highestRerun(taskPods, taskType, 0)
@@ -367,11 +446,13 @@ func (h handler) GetApprovalStatus(c *gin.Context) {
 	approval := models.Approval{}
 	if result := h.DB.Where("task_pod_uuid = ?", &taskPod.UUID).First(&approval); result.Error != nil {
 		// TODO handle error not related to does not exist
-		c.JSON(http.StatusOK, GetApprovalStatusResponseData{
-			TFOResourceUUID: uuid,
-			TaskPodUUID:     taskPod.UUID,
-			Status:          status,
-		})
+		c.JSON(http.StatusOK, response(http.StatusOK, "", []GetApprovalStatusResponseData{
+			{
+				TFOResourceUUID: uuid,
+				TaskPodUUID:     taskPod.UUID,
+				Status:          status,
+			},
+		}))
 		return
 	}
 	// TODO What is the approval status response structure going to look like?
@@ -380,11 +461,13 @@ func (h handler) GetApprovalStatus(c *gin.Context) {
 	} else {
 		status = 0
 	}
-	c.JSON(http.StatusOK, GetApprovalStatusResponseData{
-		TFOResourceUUID: uuid,
-		TaskPodUUID:     taskPod.UUID,
-		Status:          status,
-	})
+	c.JSON(http.StatusOK, response(http.StatusOK, "", []GetApprovalStatusResponseData{
+		{
+			TFOResourceUUID: uuid,
+			TaskPodUUID:     taskPod.UUID,
+			Status:          status,
+		},
+	}))
 
 }
 

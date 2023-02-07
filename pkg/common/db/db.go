@@ -3,7 +3,7 @@ package db
 import (
 	"log"
 
-	"github.com/GalleyBytes/terraform-operator-api/pkg/common/models"
+	"github.com/galleybytes/terraform-operator-api/pkg/common/models"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -15,7 +15,14 @@ func Init(url string) *gorm.DB {
 		log.Fatalln(err)
 	}
 
-	db.AutoMigrate(&models.TFOResource{}, &models.TFOTaskLog{}, &models.Cluster{}, &models.TFOResourceSpec{})
+	db.AutoMigrate(
+		&models.TFOResource{},
+		&models.TFOTaskLog{},
+		&models.Cluster{},
+		&models.TFOResourceSpec{},
+		&models.Approval{},
+		&models.TaskPod{},
+	)
 
 	return db
 }

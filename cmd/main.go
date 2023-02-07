@@ -1,8 +1,8 @@
 package main
 
 import (
-	"github.com/GalleyBytes/terraform-operator-api/pkg/api"
-	"github.com/GalleyBytes/terraform-operator-api/pkg/common/db"
+	"github.com/galleybytes/terraform-operator-api/pkg/api"
+	"github.com/galleybytes/terraform-operator-api/pkg/common/db"
 	"github.com/gin-gonic/gin"
 	"github.com/spf13/viper"
 )

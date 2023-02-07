@@ -1,3 +1,4 @@
 FROM scratch
-COPY server /server
+COPY bin/server /server
 ENTRYPOINT ["/server"]
+LABEL org.opencontainers.image.source https://github.com/galleybytes/terraform-operator-api

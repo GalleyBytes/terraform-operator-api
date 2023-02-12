@@ -6,12 +6,17 @@ VERSION := 0.0.0
 endif
 IMG ?= ${DOCKER_REPO}/${IMAGE_NAME}:${VERSION}
 
-release: build
+kind-release: build
 	docker build . -t ${IMG}
-	docker push ${IMG}
+	kind load docker-image ${IMG}
 
 build:
 	GOOS=linux GOARCH=amd64 go build -v -installsuffix cgo -o bin/server cmd/main.go
+
+ghactions-release:
+	CGO_ENABLED=0 go build -v -o bin/server cmd/main.go
+	docker build . -t ${IMG}
+	docker push ${IMG}
 
 server:
 	go run cmd/main.go

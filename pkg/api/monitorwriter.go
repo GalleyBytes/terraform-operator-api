@@ -1,11 +1,13 @@
 package api
 
 import (
+	"errors"
 	"log"
 	"net/http"
 
 	"github.com/galleybytes/terraform-operator-api/pkg/common/models"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func (h handler) AddCluster(c *gin.Context) {
@@ -52,11 +54,19 @@ func (h handler) AddTFOResourceSpec(c *gin.Context) {
 		return
 	}
 
-	tfoResourceSpec := jsonData.TFOResourceSpec
-	result := h.DB.FirstOrCreate(&tfoResourceSpec)
-	if result.Error != nil {
-		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, result.Error.Error(), nil))
-		return
+	tfoResourceSpec := models.TFOResourceSpec{}
+	if result := h.DB.Where("tfo_resource_uuid = ? AND generation = ?", &jsonData.TFOResourceSpec.TFOResourceUUID, &jsonData.TFOResourceSpec.Generation).First(&tfoResourceSpec); result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			tfoResourceSpec = jsonData.TFOResourceSpec
+			result := h.DB.Create(&tfoResourceSpec)
+			if result.Error != nil {
+				c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, result.Error.Error(), nil))
+				return
+			}
+		} else {
+			c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, result.Error.Error(), nil))
+			return
+		}
 	}
 
 	c.JSON(http.StatusOK, response(http.StatusOK, "", []models.TFOResourceSpec{tfoResourceSpec}))

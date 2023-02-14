@@ -352,6 +352,11 @@ func (h handler) GetTaskPod(c *gin.Context) {
 	c.JSON(http.StatusOK, response(http.StatusOK, "", taskPods))
 }
 
+type approvalResponse struct {
+	models.Approval `json:",inline"`
+	Status          string `json:"status"`
+}
+
 func (h handler) AllApprovals(c *gin.Context) {
 	approval := []models.Approval{}
 	h.DB.Last(&approval)
@@ -373,25 +378,23 @@ func (h handler) GetApprovalStatusViaTaskPodUUID(c *gin.Context) {
 		return
 	}
 
-	status := -1
-	approval := models.Approval{}
-	if result := h.DB.Where("task_pod_uuid = ?", &taskPod.UUID).First(&approval); result.Error != nil {
-		// TODO handle error not related to does not exist
-		c.JSON(http.StatusOK, response(http.StatusOK, "Approval "+result.Error.Error(), responseData))
+	approvals := []models.Approval{}
+	if result := h.DB.Where("task_pod_uuid = ?", &taskPod.UUID).First(&approvals); result.Error != nil {
+		c.JSON(http.StatusOK, response(http.StatusOK, "Approval "+result.Error.Error(), []approvalResponse{
+			{
+				Status: "nodata",
+				Approval: models.Approval{
+					TaskPodUUID: taskPodUUID,
+				},
+			},
+		}))
 		return
 	}
 
-	if approval.IsApproved {
-		status = 1
-	} else {
-		status = 0
-	}
-
-	c.JSON(http.StatusOK, response(http.StatusOK, "", []GetApprovalStatusResponseData{
+	c.JSON(http.StatusOK, response(http.StatusOK, "", []approvalResponse{
 		{
-			TFOResourceUUID: taskPod.TFOResourceUUID,
-			TaskPodUUID:     taskPod.UUID,
-			Status:          status,
+			Approval: approvals[0],
+			Status:   "complete",
 		},
 	}))
 }
@@ -442,33 +445,26 @@ func (h handler) GetApprovalStatus(c *gin.Context) {
 	}
 	taskPod, _ := highestRerun(taskPods, taskType, 0)
 
-	status := -1
-	approval := models.Approval{}
-	if result := h.DB.Where("task_pod_uuid = ?", &taskPod.UUID).First(&approval); result.Error != nil {
-		// TODO handle error not related to does not exist
-		c.JSON(http.StatusOK, response(http.StatusOK, "", []GetApprovalStatusResponseData{
+	// status := -1
+	approvals := []models.Approval{}
+	if result := h.DB.Where("task_pod_uuid = ?", &taskPod.UUID).First(&approvals); result.Error != nil {
+		c.JSON(http.StatusOK, response(http.StatusOK, "Approval "+result.Error.Error(), []approvalResponse{
 			{
-				TFOResourceUUID: uuid,
-				TaskPodUUID:     taskPod.UUID,
-				Status:          status,
+				Status: "nodata",
+				Approval: models.Approval{
+					TaskPodUUID: taskPod.UUID,
+				},
 			},
 		}))
 		return
 	}
-	// TODO What is the approval status response structure going to look like?
-	if approval.IsApproved {
-		status = 1
-	} else {
-		status = 0
-	}
-	c.JSON(http.StatusOK, response(http.StatusOK, "", []GetApprovalStatusResponseData{
+
+	c.JSON(http.StatusOK, response(http.StatusOK, "", []approvalResponse{
 		{
-			TFOResourceUUID: uuid,
-			TaskPodUUID:     taskPod.UUID,
-			Status:          status,
+			Approval: approvals[0],
+			Status:   "complete",
 		},
 	}))
-
 }
 
 // UpdateApproval takes the uuid and a JSON data param and create a row in the approval table.

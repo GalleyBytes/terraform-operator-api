@@ -47,7 +47,7 @@ func validateJwt(c *gin.Context) {
 	}
 }
 
-func (h handler) login(c *gin.Context) {
+func (h APIHandler) login(c *gin.Context) {
 	jsonData := struct {
 		Username string `json:"user"`
 		Password string `json:"password"`

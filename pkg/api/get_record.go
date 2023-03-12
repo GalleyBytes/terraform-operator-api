@@ -37,7 +37,7 @@ func response(httpstatus int64, message string, results interface{}) *Response {
 	return &resp
 }
 
-func (h handler) GetDistinctGeneration(c *gin.Context) {
+func (h APIHandler) GetDistinctGeneration(c *gin.Context) {
 	// The TFOResourceSpec is created once for each generation that passes thru the monitor. It is the best
 	// resource to query for generations of a particular resource.
 	uuid := c.Param("tfo_resource_uuid")
@@ -49,7 +49,7 @@ func (h handler) GetDistinctGeneration(c *gin.Context) {
 	c.JSON(http.StatusOK, &generation)
 }
 
-func (h handler) GetUuidByClusterID(c *gin.Context) {
+func (h APIHandler) GetUuidByClusterID(c *gin.Context) {
 	clusterID := c.Param("cluster_id")
 	var clusterIdInfo models.TFOResource
 
@@ -62,7 +62,7 @@ func (h handler) GetUuidByClusterID(c *gin.Context) {
 
 }
 
-func (h handler) GetCluster(c *gin.Context) {
+func (h APIHandler) GetCluster(c *gin.Context) {
 	clusterID := c.Param("cluster_id")
 	if clusterID == "" {
 		// ID must be integer-like
@@ -83,12 +83,12 @@ func (h handler) GetCluster(c *gin.Context) {
 
 }
 
-func (h handler) Index(c *gin.Context) {
+func (h APIHandler) Index(c *gin.Context) {
 	// TODO return api discovery data
 	c.JSON(http.StatusNoContent, nil)
 }
 
-func (h handler) ListClusters(c *gin.Context) {
+func (h APIHandler) ListClusters(c *gin.Context) {
 	var clusters []models.Cluster
 
 	if result := h.DB.Find(&clusters); result.Error != nil {
@@ -99,7 +99,7 @@ func (h handler) ListClusters(c *gin.Context) {
 	c.JSON(http.StatusOK, &clusters)
 }
 
-func (h handler) GetClustersResources(c *gin.Context) {
+func (h APIHandler) GetClustersResources(c *gin.Context) {
 	var resources []models.TFOResource
 	clusterID := c.Param("cluster_id")
 
@@ -111,7 +111,7 @@ func (h handler) GetClustersResources(c *gin.Context) {
 	c.JSON(http.StatusOK, &resources)
 }
 
-func (h handler) GetResourceByUUID(c *gin.Context) {
+func (h APIHandler) GetResourceByUUID(c *gin.Context) {
 	var tfoResources []models.TFOResource
 	uuid := c.Param("tfo_resource_uuid")
 	responseMsg := ""
@@ -148,7 +148,7 @@ func highestRerun(taskPods []models.TaskPod, taskType string, minimum float64) (
 	return taskPodOfHighestRerun, rerun
 }
 
-func (h handler) LatestGeneration(uuid string) string {
+func (h APIHandler) LatestGeneration(uuid string) string {
 	var tfoResource models.TFOResource
 	if result := h.DB.First(&tfoResource, "uuid = ?", &uuid); result.Error != nil {
 		return ""
@@ -168,7 +168,7 @@ type ResourceLog struct {
 
 // GetClustersResourceLogs will return the latest logs for the selected resource. The only filted allowed
 // in this call is the generation to switch getting the latest logs for a given generation.
-func (h handler) GetClustersResourcesLogs(c *gin.Context) {
+func (h APIHandler) GetClustersResourcesLogs(c *gin.Context) {
 
 	// URL param arguments expected. These are used to construct the url and are always expected to contain a string
 	generationFilter := c.Param("generation")
@@ -184,7 +184,7 @@ func (h handler) GetClustersResourcesLogs(c *gin.Context) {
 	c.JSON(http.StatusOK, response(http.StatusOK, "", logs))
 }
 
-func (h handler) ResourceLogs(generationFilter, rerunFilter, taskTypeFilter, uuid string) ([]ResourceLog, error) {
+func (h APIHandler) ResourceLogs(generationFilter, rerunFilter, taskTypeFilter, uuid string) ([]ResourceLog, error) {
 	logs := []ResourceLog{}
 	if generationFilter == "latest" || generationFilter == "" {
 		// "latest" is a special case that reads the 'CurrentGeneration' value out of TFOResource
@@ -282,7 +282,7 @@ func (h handler) ResourceLogs(generationFilter, rerunFilter, taskTypeFilter, uui
 	return logs, nil
 }
 
-func (h handler) GetTFOTaskLogsViaTask(c *gin.Context) {
+func (h APIHandler) GetTFOTaskLogsViaTask(c *gin.Context) {
 	emptyResponse := []interface{}{}
 	taskPodUUID := c.Param("task_pod_uuid")
 
@@ -297,7 +297,7 @@ func (h handler) GetTFOTaskLogsViaTask(c *gin.Context) {
 	c.JSON(http.StatusOK, response(http.StatusOK, "", tfoTaskLogs))
 }
 
-func (h handler) LookupResourceSpec(generation, uuid string) *models.TFOResourceSpec {
+func (h APIHandler) LookupResourceSpec(generation, uuid string) *models.TFOResourceSpec {
 	var tfoResource models.TFOResource
 	var tfoResourceSpec models.TFOResourceSpec
 
@@ -319,7 +319,7 @@ type GetResourceSpecResponseData struct {
 	models.TFOResourceSpec `json:",inline"`
 }
 
-func (h handler) GetResourceSpec(c *gin.Context) {
+func (h APIHandler) GetResourceSpec(c *gin.Context) {
 	uuid := c.Param("tfo_resource_uuid")
 	generation := c.Param("generation")
 	tfoResourceSpec := h.LookupResourceSpec(generation, uuid)
@@ -340,7 +340,7 @@ type GetApprovalStatusResponseData struct {
 	Status int `json:"status"`
 }
 
-func (h handler) GetTaskPod(c *gin.Context) {
+func (h APIHandler) GetTaskPod(c *gin.Context) {
 	responseData := []interface{}{}
 	taskPodUUID := c.Param("task_pod_uuid")
 	taskPods := []models.TaskPod{}
@@ -357,13 +357,13 @@ type approvalResponse struct {
 	Status          string `json:"status"`
 }
 
-func (h handler) AllApprovals(c *gin.Context) {
+func (h APIHandler) AllApprovals(c *gin.Context) {
 	approval := []models.Approval{}
 	h.DB.Last(&approval)
 	c.JSON(http.StatusOK, response(http.StatusOK, "", approval))
 }
 
-func (h handler) GetApprovalStatusViaTaskPodUUID(c *gin.Context) {
+func (h APIHandler) GetApprovalStatusViaTaskPodUUID(c *gin.Context) {
 	responseData := []interface{}{}
 	taskPodUUID := c.Param("task_pod_uuid")
 	taskPod := models.TaskPod{}
@@ -403,7 +403,7 @@ func (h handler) GetApprovalStatusViaTaskPodUUID(c *gin.Context) {
 // Use the generation to get the TFOResourceSpec and parses the "spec" for the requireApproval value. If the
 // value is "true", this function finds the latest plan task by getting the TaskPod with the highest rerun number.
 // The UUID of the TaskPod is used to lookup the Approval status to return to the caller.
-func (h handler) GetApprovalStatus(c *gin.Context) {
+func (h APIHandler) GetApprovalStatus(c *gin.Context) {
 	responseData := []interface{}{}
 	uuid := c.Param("tfo_resource_uuid")
 
@@ -468,7 +468,7 @@ func (h handler) GetApprovalStatus(c *gin.Context) {
 }
 
 // UpdateApproval takes the uuid and a JSON data param and create a row in the approval table.
-func (h handler) UpdateApproval(c *gin.Context) {
+func (h APIHandler) UpdateApproval(c *gin.Context) {
 	uuid := c.Param("task_pod_uuid")
 
 	type Approval struct {
@@ -537,7 +537,7 @@ func (s *SocketListener) Listen() {
 	}()
 }
 
-func (h handler) ResourceLogWatcher(c *gin.Context) {
+func (h APIHandler) ResourceLogWatcher(c *gin.Context) {
 	tfoResourceUUID := c.Param("tfo_resource_uuid")
 	_ = tfoResourceUUID
 

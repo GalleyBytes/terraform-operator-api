@@ -1,9 +1,11 @@
 package main
 
 import (
+	"github.com/galleybytes/terraform-operator-api/internal/qworker"
 	"github.com/galleybytes/terraform-operator-api/pkg/api"
 	"github.com/galleybytes/terraform-operator-api/pkg/common/db"
-	"github.com/gin-gonic/gin"
+	"github.com/gammazero/deque"
+	tfv1alpha2 "github.com/isaaguilar/terraform-operator/pkg/apis/tf/v1alpha2"
 	"github.com/spf13/viper"
 )
 
@@ -15,11 +17,12 @@ func main() {
 	port := viper.Get("PORT").(string)
 	dbUrl := viper.Get("DB_URL").(string)
 
-	r := gin.Default()
-	h := db.Init(dbUrl)
+	database := db.Init(dbUrl)
+	queue := deque.Deque[tfv1alpha2.Terraform]{}
 
-	api.RegisterRoutes(r, h)
+	qworker.BackgroundWorker(&queue)
 
-	r.Run(port)
-
+	apiHandler := api.NewAPIHandler(database, &queue)
+	apiHandler.RegisterRoutes()
+	apiHandler.Server.Run(port)
 }

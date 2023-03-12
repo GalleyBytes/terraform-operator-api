@@ -10,12 +10,11 @@ import (
 
 func Init(url string) *gorm.DB {
 	db, err := gorm.Open(postgres.Open(url), &gorm.Config{})
-
 	if err != nil {
 		log.Fatalln(err)
 	}
 
-	db.AutoMigrate(
+	err = db.AutoMigrate(
 		&models.TFOResource{},
 		&models.TFOTaskLog{},
 		&models.Cluster{},
@@ -23,6 +22,10 @@ func Init(url string) *gorm.DB {
 		&models.Approval{},
 		&models.TaskPod{},
 	)
+
+	if err != nil {
+		log.Panic(err)
+	}
 
 	return db
 }

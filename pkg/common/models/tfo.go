@@ -27,6 +27,8 @@ type TFOResource struct {
 	Namespace         string    `json:"namespace"`
 	Name              string    `json:"name"`
 	CurrentGeneration string    `json:"current_generation"`
+	Annotations       string    `json:"annotations"`
+	Labels            string    `json:"labels"`
 
 	// foreign key to a cluster
 	Cluster   Cluster `json:"cluster,omitempty"`

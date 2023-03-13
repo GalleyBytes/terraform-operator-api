@@ -80,7 +80,17 @@ func worker(queue *deque.Deque[tfv1alpha2.Terraform]) {
 			continue
 		}
 
-		tf.Name = string(tf.UID)
+		defaultNamespace := "default"
+		cleanTf := tfv1alpha2.Terraform{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:        string(tf.UID),
+				Namespace:   defaultNamespace,
+				Annotations: tf.Annotations,
+				Labels:      tf.Labels,
+			},
+			Spec: tf.Spec,
+		}
+
 		if isNameExists {
 			// The name exists via uuid and therefore is an external job
 			log.Println("Work needs to be done to UPDATE the resource")
@@ -88,7 +98,7 @@ func worker(queue *deque.Deque[tfv1alpha2.Terraform]) {
 		}
 
 		log.Println("Work needs to be done to ADD the resource")
-		unstructuredTerraform, err := convertTerraformToUnstructuredObject(tf)
+		unstructuredTerraform, err := convertTerraformToUnstructuredObject(cleanTf)
 		if err != nil {
 			log.Printf("An error occurred formatting tf object for saving: %v", err)
 			go func() {
@@ -98,17 +108,7 @@ func worker(queue *deque.Deque[tfv1alpha2.Terraform]) {
 			continue
 		}
 
-		//
-		//
-		//
-		//
-		//THERE IS SOME KIND OF ERROR IN THE SAVE FUNCTION.... NEEDS INVESTIGATION
-		//
-		//
-		//
-		//
-		pprint(unstructuredTerraform)
-		_, err = dynamicClient.Resource(terraformResource).Create(ctx, unstructuredTerraform, metav1.CreateOptions{})
+		_, err = dynamicClient.Resource(terraformResource).Namespace("default").Create(ctx, unstructuredTerraform, metav1.CreateOptions{})
 		if err != nil {
 			log.Printf("An error occurred saving tf object: %v", err)
 			go func() {
@@ -117,7 +117,9 @@ func worker(queue *deque.Deque[tfv1alpha2.Terraform]) {
 			}()
 			continue
 		}
+		log.Printf("Added terraform resource '%s' ('%s/%s')", cleanTf.Name, tf.Namespace, tf.Name)
 	}
+
 }
 
 func convertTo[T any](unstructured any) T {

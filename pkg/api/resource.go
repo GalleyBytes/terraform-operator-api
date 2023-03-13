@@ -170,7 +170,7 @@ func (h APIHandler) addResource(c *gin.Context) error {
 
 	// new resources must not already exist in the database
 	// var x models.TFOResource
-	result = h.DB.Find(&tfoResource)
+	result = h.DB.First(&tfoResource)
 	if result.Error == nil {
 		// the UUID exists in the database
 		return errors.New("TFOResource already exists in database")
@@ -231,7 +231,7 @@ func (h APIHandler) updateResource(c *gin.Context) error {
 	})
 	if result.Error != nil {
 		// cluster must exist prior to adding resources
-		return result.Error
+		return fmt.Errorf("error getting cluster: %v", result.Error)
 	}
 
 	// new resources must not already exist in the database
@@ -239,7 +239,7 @@ func (h APIHandler) updateResource(c *gin.Context) error {
 	result = h.DB.Where("uuid = ?", tfoResource.UUID).First(&tfoResourceFromDatabase)
 	if result.Error != nil {
 		// result must exist to update
-		return result.Error
+		return fmt.Errorf("error getting tfoResource: %v", result.Error)
 	}
 
 	result = h.DB.Save(&tfoResource)
@@ -247,9 +247,15 @@ func (h APIHandler) updateResource(c *gin.Context) error {
 		return result.Error
 	}
 
-	result = h.DB.Create(&tfoResourceSpec)
-	if result.Error != nil {
-		return result.Error
+	tfoResourceSpecFromDatabase := models.TFOResourceSpec{}
+	result = h.DB.Where("tfo_resource_uuid = ? AND generation = ?", tfoResource.UUID, tfoResource.CurrentGeneration).First(&tfoResourceSpecFromDatabase)
+	if result.Error != nil && errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		result = h.DB.Create(&tfoResourceSpec)
+		if result.Error != nil {
+			return result.Error
+		}
+	} else if result.Error != nil {
+		return fmt.Errorf("error occurred when looking for tfo_resource_spec: %v", result.Error)
 	}
 
 	// TODO On UPDATE events, the tfo resource should be saved to the cluster. This should be done async. The event should

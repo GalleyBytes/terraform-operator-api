@@ -242,6 +242,12 @@ func (h APIHandler) updateResource(c *gin.Context) error {
 		return fmt.Errorf("error getting tfoResource: %v", result.Error)
 	}
 
+	gen1 := tfoResource.CurrentGeneration
+	gen2 := tfoResourceFromDatabase.CurrentGeneration
+	if !equalOrGreater(gen1, gen2) {
+		return fmt.Errorf("error updating resource, generation '%s' is less than current generation '%s'", gen1, gen2)
+	}
+
 	result = h.DB.Save(&tfoResource)
 	if result.Error != nil {
 		return result.Error
@@ -263,6 +269,20 @@ func (h APIHandler) updateResource(c *gin.Context) error {
 	h.Queue.PushBack(jsonData.Terraform)
 
 	return nil
+}
+
+func equalOrGreater(s1, s2 string) bool {
+	i1, err := strconv.Atoi(s1)
+	if err != nil {
+		log.Panic(err)
+	}
+
+	i2, err := strconv.Atoi(s2)
+	if err != nil {
+		log.Panic(err)
+	}
+
+	return i1 >= i2
 }
 
 func mustJsonify(o interface{}) string {

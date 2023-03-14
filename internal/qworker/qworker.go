@@ -7,12 +7,10 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/gammazero/deque"
 	tfv1alpha2 "github.com/isaaguilar/terraform-operator/pkg/apis/tf/v1alpha2"
-	"github.com/mattbaird/jsonpatch"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -69,17 +67,15 @@ func worker(queue *deque.Deque[tfv1alpha2.Terraform]) {
 			continue
 		}
 		terraformList := convertTo[tfv1alpha2.TerraformList](unstructedTerraformList)
-		indexOfExisting := 0
 		isNameExists := false
 		isUUIDBelongToThisCluster := false
-		for i, terraform := range terraformList.Items {
+		for _, terraform := range terraformList.Items {
 			if terraform.UID == tf.UID {
 				isUUIDBelongToThisCluster = true
 				break
 			}
 			if terraform.Name == string(tf.UID) {
 				isNameExists = true
-				indexOfExisting = i
 				break
 			}
 		}
@@ -107,8 +103,7 @@ func worker(queue *deque.Deque[tfv1alpha2.Terraform]) {
 		}
 
 		if isNameExists {
-			realTf := terraformList.Items[indexOfExisting]
-			err := patch(realTf, modTf, ctx, realTf.Name, resourceClient.Namespace(namespace))
+			err := patch(modTf, ctx, string(tf.UID), resourceClient.Namespace(namespace))
 			if err != nil {
 				requeue(queue, tf, fmt.Sprintf("An error occurred patching tf object: %v", err))
 				continue
@@ -158,52 +153,13 @@ func convertTerraformToUnstructuredObject(terraform tfv1alpha2.Terraform) (*unst
 	return &unstructuredObject, nil
 }
 
-func patch[T any](old, new T, ctx context.Context, name string, client dynamic.ResourceInterface) error {
+func patch[T any](new T, ctx context.Context, name string, client dynamic.ResourceInterface) error {
 	// Apply new changes from awsNodeTemplate into awsNodeTemplateOld
-
-	oldJSON, err := json.Marshal(old)
-	if err != nil {
-		return err
-	}
 	inputJSON, err := json.Marshal(new)
 	if err != nil {
 		return err
 	}
-	err = json.Unmarshal(inputJSON, &old)
-	if err != nil {
-		return err
-	}
-	newJSON, err := json.Marshal(old)
-	if err != nil {
-		return err
-	}
-	patch, err := jsonpatch.CreatePatch(oldJSON, newJSON)
-	if err != nil {
-		return err
-	}
-	var sanitizedPatch []jsonpatch.JsonPatchOperation
-	for _, p := range patch {
-		if strings.HasPrefix(p.Path, "/status") {
-			// Never modify the status, this is controlled by the tfo controller
-			continue
-		}
-		if p.Path == "/metadata/creationTimestamp" {
-			// managed by k8s
-			continue
-		}
-		log.Println(p)
-		sanitizedPatch = append(sanitizedPatch, p)
-	}
-	if len(sanitizedPatch) == 0 {
-		log.Println("No patches found")
-		return nil
-	}
-	jsonPatch, err := json.Marshal(sanitizedPatch)
-	if err != nil {
-		return err
-	}
-
-	_, err = client.Patch(ctx, name, types.JSONPatchType, jsonPatch, metav1.PatchOptions{})
+	_, err = client.Patch(ctx, name, types.MergePatchType, inputJSON, metav1.PatchOptions{})
 	if err != nil {
 		return err
 	}

@@ -244,7 +244,7 @@ func (h APIHandler) updateResource(c *gin.Context) error {
 
 	gen1 := tfoResource.CurrentGeneration
 	gen2 := tfoResourceFromDatabase.CurrentGeneration
-	if !equalOrGreater(gen1, gen2) {
+	if compare(gen1, "<", gen2) {
 		return fmt.Errorf("error updating resource, generation '%s' is less than current generation '%s'", gen1, gen2)
 	}
 
@@ -266,6 +266,7 @@ func (h APIHandler) updateResource(c *gin.Context) error {
 
 	// TODO On UPDATE events, the tfo resource should be saved to the cluster. This should be done async. The event should
 	// be added a a persistent queue. Make the queue used in this project swappable for an external queue.
+	// TODO #2) ensure the data in the queue the database data, not the data passed in by the api query (ie not jsonData)
 	h.Queue.PushBack(jsonData.Terraform)
 
 	return nil
@@ -283,6 +284,33 @@ func equalOrGreater(s1, s2 string) bool {
 	}
 
 	return i1 >= i2
+}
+
+func compare(s1, op, s2 string) bool {
+	i1, err := strconv.Atoi(s1)
+	if err != nil {
+		log.Panic(err)
+	}
+
+	i2, err := strconv.Atoi(s2)
+	if err != nil {
+		log.Panic(err)
+	}
+
+	switch op {
+	case ">":
+		return i1 > i2
+	case ">=":
+		return i1 >= i2
+	case "==":
+		return i1 == i2
+	case "<":
+		return i1 < i2
+	case "<=":
+		return i1 <= i2
+	default:
+		return i1 == i2
+	}
 }
 
 func mustJsonify(o interface{}) string {

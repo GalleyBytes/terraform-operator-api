@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/gammazero/deque"
@@ -64,6 +65,7 @@ func worker(queue *deque.Deque[tfv1alpha2.Terraform]) {
 		resourceClient := dynamicClient.Resource(terraformResource)
 		unstructedTerraformList, err := resourceClient.List(ctx, metav1.ListOptions{})
 		if err != nil {
+			requeue(queue, tf, fmt.Sprintln("An error occurred listing tf objects"))
 			continue
 		}
 		terraformList := convertTo[tfv1alpha2.TerraformList](unstructedTerraformList)
@@ -108,11 +110,7 @@ func worker(queue *deque.Deque[tfv1alpha2.Terraform]) {
 			realTf := terraformList.Items[indexOfExisting]
 			err := patch(realTf, modTf, ctx, realTf.Name, resourceClient.Namespace(namespace))
 			if err != nil {
-				log.Printf("An error occurred patching tf object: %v", err)
-				go func() {
-					time.Sleep(15 * time.Second)
-					queue.PushBack(tf)
-				}()
+				requeue(queue, tf, fmt.Sprintf("An error occurred patching tf object: %v", err))
 				continue
 			}
 			continue
@@ -121,21 +119,13 @@ func worker(queue *deque.Deque[tfv1alpha2.Terraform]) {
 		log.Println("Work needs to be done to ADD the resource")
 		unstructuredTerraform, err := convertTerraformToUnstructuredObject(modTf)
 		if err != nil {
-			log.Printf("An error occurred formatting tf object for saving: %v", err)
-			go func() {
-				time.Sleep(15 * time.Second)
-				queue.PushBack(tf)
-			}()
+			requeue(queue, tf, fmt.Sprintf("An error occurred formatting tf object for saving: %v", err))
 			continue
 		}
 
 		_, err = dynamicClient.Resource(terraformResource).Namespace("default").Create(ctx, unstructuredTerraform, metav1.CreateOptions{})
 		if err != nil {
-			log.Printf("An error occurred saving tf object: %v", err)
-			go func() {
-				time.Sleep(15 * time.Second)
-				queue.PushBack(tf)
-			}()
+			requeue(queue, tf, fmt.Sprintf("An error occurred saving tf object: %v", err))
 			continue
 		}
 		log.Printf("Added terraform resource '%s' ('%s/%s')", modTf.Name, tf.Namespace, tf.Name)
@@ -175,12 +165,15 @@ func patch[T any](old, new T, ctx context.Context, name string, client dynamic.R
 	if err != nil {
 		return err
 	}
-
-	err = json.Unmarshal(oldJSON, &new)
+	inputJSON, err := json.Marshal(new)
 	if err != nil {
 		return err
 	}
-	newJSON, err := json.Marshal(new)
+	err = json.Unmarshal(inputJSON, &old)
+	if err != nil {
+		return err
+	}
+	newJSON, err := json.Marshal(old)
 	if err != nil {
 		return err
 	}
@@ -188,13 +181,24 @@ func patch[T any](old, new T, ctx context.Context, name string, client dynamic.R
 	if err != nil {
 		return err
 	}
-	if len(patch) == 0 {
+	var sanitizedPatch []jsonpatch.JsonPatchOperation
+	for _, p := range patch {
+		if strings.HasPrefix(p.Path, "/status") {
+			// Never modify the status, this is controlled by the tfo controller
+			continue
+		}
+		if p.Path == "/metadata/creationTimestamp" {
+			// managed by k8s
+			continue
+		}
+		log.Println(p)
+		sanitizedPatch = append(sanitizedPatch, p)
+	}
+	if len(sanitizedPatch) == 0 {
+		log.Println("No patches found")
 		return nil
 	}
-	for _, p := range patch {
-		log.Println(p)
-	}
-	jsonPatch, err := json.Marshal(patch)
+	jsonPatch, err := json.Marshal(sanitizedPatch)
 	if err != nil {
 		return err
 	}
@@ -205,6 +209,14 @@ func patch[T any](old, new T, ctx context.Context, name string, client dynamic.R
 	}
 	log.Printf("terraform/%s patched", name)
 	return nil
+}
+
+func requeue(queue *deque.Deque[tfv1alpha2.Terraform], tf tfv1alpha2.Terraform, reason string) {
+	log.Printf("An error occurred saving tf object: %s", reason)
+	go func() {
+		time.Sleep(15 * time.Second)
+		queue.PushBack(tf)
+	}()
 }
 
 func pprint(o interface{}) {

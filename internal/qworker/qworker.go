@@ -85,6 +85,7 @@ func worker(queue *deque.Deque[tfv1alpha2.Terraform]) {
 			continue
 		}
 
+		name := string(tf.UID)
 		namespace := "default"
 		labels := tf.Labels
 		if labels == nil {
@@ -92,9 +93,12 @@ func worker(queue *deque.Deque[tfv1alpha2.Terraform]) {
 		}
 		labels["tfo-api.galleybytes.com/original-resource-name"] = tf.Name
 		labels["tfo-api.galleybytes.com/original-resource-namespace"] = tf.Namespace
-		modTf := tfv1alpha2.Terraform{
+
+		// modTf as in the modified terraform resource that get added to the remote cluster. This cluster can't have the
+		// same name as any other resource, so we use the uid or the original resource as a unique name for this one.
+		var modTf = tfv1alpha2.Terraform{
 			ObjectMeta: metav1.ObjectMeta{
-				Name:        string(tf.UID),
+				Name:        name,
 				Namespace:   namespace,
 				Annotations: tf.Annotations,
 				Labels:      labels,
@@ -103,27 +107,21 @@ func worker(queue *deque.Deque[tfv1alpha2.Terraform]) {
 		}
 
 		if isNameExists {
-			err := patch(modTf, ctx, string(tf.UID), resourceClient.Namespace(namespace))
+			err := doPatch(modTf, ctx, name, namespace, resourceClient)
 			if err != nil {
 				requeue(queue, tf, fmt.Sprintf("An error occurred patching tf object: %v", err))
 				continue
 			}
+			log.Printf("terraform %s/%s patched", namespace, name)
 			continue
 		}
 
-		log.Println("Work needs to be done to ADD the resource")
-		unstructuredTerraform, err := convertTerraformToUnstructuredObject(modTf)
+		err = doCreate(modTf, ctx, namespace, resourceClient)
 		if err != nil {
-			requeue(queue, tf, fmt.Sprintf("An error occurred formatting tf object for saving: %v", err))
+			requeue(queue, tf, fmt.Sprintf("Error creating new tf resource: %v", err))
 			continue
 		}
-
-		_, err = dynamicClient.Resource(terraformResource).Namespace("default").Create(ctx, unstructuredTerraform, metav1.CreateOptions{})
-		if err != nil {
-			requeue(queue, tf, fmt.Sprintf("An error occurred saving tf object: %v", err))
-			continue
-		}
-		log.Printf("Added terraform resource '%s' ('%s/%s')", modTf.Name, tf.Namespace, tf.Name)
+		log.Printf("Added terraform resource '%s' ('%s/%s')", name, tf.Namespace, tf.Name)
 	}
 
 }
@@ -153,17 +151,28 @@ func convertTerraformToUnstructuredObject(terraform tfv1alpha2.Terraform) (*unst
 	return &unstructuredObject, nil
 }
 
-func patch[T any](new T, ctx context.Context, name string, client dynamic.ResourceInterface) error {
+func doCreate(new tfv1alpha2.Terraform, ctx context.Context, namespace string, client dynamic.NamespaceableResourceInterface) error {
+	unstructuredTerraform, err := convertTerraformToUnstructuredObject(new)
+	if err != nil {
+		return fmt.Errorf("an error occurred formatting tf object for saving: %v", err)
+	}
+	_, err = client.Namespace(namespace).Create(ctx, unstructuredTerraform, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("an error occurred saving tf object: %v", err)
+	}
+	return nil
+}
+
+func doPatch(new any, ctx context.Context, name, namespace string, client dynamic.NamespaceableResourceInterface) error {
 	// Apply new changes from awsNodeTemplate into awsNodeTemplateOld
 	inputJSON, err := json.Marshal(new)
 	if err != nil {
 		return err
 	}
-	_, err = client.Patch(ctx, name, types.MergePatchType, inputJSON, metav1.PatchOptions{})
+	_, err = client.Namespace(namespace).Patch(ctx, name, types.MergePatchType, inputJSON, metav1.PatchOptions{})
 	if err != nil {
 		return err
 	}
-	log.Printf("terraform/%s patched", name)
 	return nil
 }
 

@@ -177,7 +177,7 @@ func doPatch(new any, ctx context.Context, name, namespace string, client dynami
 }
 
 func requeue(queue *deque.Deque[tfv1alpha2.Terraform], tf tfv1alpha2.Terraform, reason string) {
-	log.Printf("An error occurred saving tf object: %s", reason)
+	log.Println(reason)
 	go func() {
 		time.Sleep(15 * time.Second)
 		queue.PushBack(tf)

@@ -158,11 +158,12 @@ func (h APIHandler) addResource(c *gin.Context) error {
 		return err
 	}
 
-	result := h.DB.First(&models.Cluster{
+	cluster := &models.Cluster{
 		Model: gorm.Model{
 			ID: clusterIDUint,
 		},
-	})
+	}
+	result := h.DB.First(cluster)
 	if result.Error != nil {
 		// cluster must exist prior to adding resources
 		return result.Error
@@ -188,8 +189,8 @@ func (h APIHandler) addResource(c *gin.Context) error {
 		return fmt.Errorf("error saving tfo_resource_spec: %s", result.Error)
 	}
 
-	// TODO On ADD events, the tfo resource should be saved to the cluster. This should be done async. The event should
-	// be added a a persistent queue. Make the queue used in this project swappable for an external queue.
+	h.appendClusterNameLabel(&jsonData.Terraform, cluster.Name)
+	// TODO Allow using a different queue
 	h.Queue.PushBack(jsonData.Terraform)
 
 	return nil
@@ -224,11 +225,12 @@ func (h APIHandler) updateResource(c *gin.Context) error {
 		return err
 	}
 
-	result := h.DB.First(&models.Cluster{
+	cluster := &models.Cluster{
 		Model: gorm.Model{
 			ID: clusterIDUint,
 		},
-	})
+	}
+	result := h.DB.First(cluster)
 	if result.Error != nil {
 		// cluster must exist prior to adding resources
 		return fmt.Errorf("error getting cluster: %v", result.Error)
@@ -264,12 +266,23 @@ func (h APIHandler) updateResource(c *gin.Context) error {
 		return fmt.Errorf("error occurred when looking for tfo_resource_spec: %v", result.Error)
 	}
 
-	// TODO On UPDATE events, the tfo resource should be saved to the cluster. This should be done async. The event should
-	// be added a a persistent queue. Make the queue used in this project swappable for an external queue.
-	// TODO #2) ensure the data in the queue the database data, not the data passed in by the api query (ie not jsonData)
+	h.appendClusterNameLabel(&jsonData.Terraform, cluster.Name)
+	// TODO Allow using a different queue
 	h.Queue.PushBack(jsonData.Terraform)
 
 	return nil
+}
+
+// appendClusterNameLabel will hack the cluster name to the resource's labels.
+// This make it easier to identify the origin of the resource in a remote cluster.
+func (h APIHandler) appendClusterNameLabel(tf *tfv1alpha2.Terraform, clusterName string) {
+	if clusterName == "" {
+		return
+	}
+	if tf.Labels == nil {
+		tf.Labels = map[string]string{}
+	}
+	tf.Labels["tfo-api.galleybytes.com/cluster-name"] = clusterName
 }
 
 func equalOrGreater(s1, s2 string) bool {

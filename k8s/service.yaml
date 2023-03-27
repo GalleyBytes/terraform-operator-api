@@ -5,6 +5,7 @@ metadata:
     service: terraform-operator
     component: api
   name: terraform-operator-api
+  namespace: tf-system
 spec:
   ports:
   - name: http

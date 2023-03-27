@@ -2,6 +2,7 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: terraform-operator-api
+  namespace: tf-system
 spec:
   replicas: 1
   selector:
@@ -16,6 +17,7 @@ spec:
         service: terraform-operator
         component: api
     spec:
+      serviceAccount: terraform-operator-api
       containers:
       - env:
         - name: PORT

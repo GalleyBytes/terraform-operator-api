@@ -18,3 +18,6 @@
 # binary build
 server
 bin
+
+# ides
+.vscode

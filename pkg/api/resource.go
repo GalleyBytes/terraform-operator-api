@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	tfv1alpha2 "github.com/isaaguilar/terraform-operator/pkg/apis/tf/v1alpha2"
 	"gorm.io/gorm"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type resource struct {
@@ -98,6 +99,63 @@ func (h APIHandler) AddCluster(c *gin.Context) {
 	c.JSON(http.StatusOK, response(http.StatusOK, "", []models.Cluster{cluster}))
 }
 
+func (h APIHandler) getClusterID(clusterName string) uint {
+	// TODO Use a temporary cache to store clusterName to remove a db lookup
+	var clusters []models.Cluster
+	if result := h.DB.Where("name = ?", clusterName).First(&clusters); result.Error != nil {
+		return 0
+	}
+	return clusters[0].ID
+}
+
+// ResourcePoll is a short poll that checks and returns resources created from the tf resource's workflow
+func (h APIHandler) ResourcePoll(c *gin.Context) {
+	resourceUUID := c.Param("tfo_resource_uuid")
+
+	// Before checking for resources to return, check that the current generation has completed
+	tf, err := h.tfoclientset.TfV1alpha2().Terraforms("default").Get(c, resourceUUID, metav1.GetOptions{})
+	if err != nil {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
+		return
+	}
+	if tf.Status.Stage.Generation != tf.Generation || tf.Status.Stage.Reason != "COMPLETED_APPLY" {
+		c.JSON(http.StatusOK, response(http.StatusOK, fmt.Sprintf("The '%s' workflow has not completed", tf.Name), nil))
+		return
+	}
+
+	// Check if this contains known resources to return
+	outputsSecretName := ""
+	if tf.Spec.WriteOutputsToStatus {
+		// https://github.com/isaaguilar/terraform-operator/blob/master/pkg/controllers/terraform_controller.go#L278
+		outputsSecretName = fmt.Sprintf("%-v%s", tf.Status.PodNamePrefix, fmt.Sprint(tf.Generation))
+	}
+	if tf.Spec.OutputsSecret != "" {
+		// https://github.com/isaaguilar/terraform-operator/blob/master/pkg/controllers/terraform_controller.go#L428
+		outputsSecretName = tf.Spec.OutputsSecret
+	}
+	if outputsSecretName == "" {
+		// TODO Currently no other resources are expected. Resources created outside of the normal workflow
+		// will be ignored. Extending a list of resources to return might be interesting since there is not
+		// a way for TFO to track those resources.
+		c.JSON(http.StatusOK, response(http.StatusOK, fmt.Sprintf("The '%s' workflow does not create secrets", tf.Name), nil))
+	}
+
+	secretClient := h.clientset.CoreV1().Secrets("default")
+	secret, err := secretClient.Get(c, outputsSecretName, metav1.GetOptions{})
+	if err != nil {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
+		return
+	}
+	resources := []string{}
+	b, err := json.Marshal(secret)
+	if err != nil {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
+		return
+	}
+	resources = append(resources, string(b))
+	c.JSON(http.StatusOK, response(http.StatusOK, "", resources))
+}
+
 func (h APIHandler) ResourceEvent(c *gin.Context) {
 	if c.Request.Method == http.MethodPost {
 		err := h.addResource(c)
@@ -130,18 +188,13 @@ func (h APIHandler) ResourceEvent(c *gin.Context) {
 }
 
 func (h APIHandler) addResource(c *gin.Context) error {
-	clusterID := c.Param("cluster_id")
-	if clusterID == "" || clusterID == "0" {
-		return errors.New(":cluster_id: url parameter cannot be empty or 0")
+	clusterName := c.Param("cluster_name")
+	clusterID := h.getClusterID(clusterName)
+	if clusterID == 0 {
+		return fmt.Errorf("cluster_name '%s' not found", clusterName)
 	}
-	clusterIDInt, err := strconv.Atoi(clusterID)
-	if err != nil {
-		return errors.New(":cluster_id: url parameter must be a valid integer")
-	}
-	clusterIDUint := uint(clusterIDInt)
-
 	jsonData := resource{}
-	err = c.BindJSON(&jsonData)
+	err := c.BindJSON(&jsonData)
 	if err != nil {
 		log.Println("Unable to parse JSON from request data")
 		return errors.New("Unable to parse JSON from request data: " + err.Error())
@@ -153,14 +206,14 @@ func (h APIHandler) addResource(c *gin.Context) error {
 		return err
 	}
 
-	tfoResource, tfoResourceSpec, err := jsonData.Parse(clusterIDUint)
+	tfoResource, tfoResourceSpec, err := jsonData.Parse(clusterID)
 	if err != nil {
 		return err
 	}
 
 	cluster := &models.Cluster{
 		Model: gorm.Model{
-			ID: clusterIDUint,
+			ID: clusterID,
 		},
 	}
 	result := h.DB.First(cluster)
@@ -197,18 +250,14 @@ func (h APIHandler) addResource(c *gin.Context) error {
 }
 
 func (h APIHandler) updateResource(c *gin.Context) error {
-	clusterID := c.Param("cluster_id")
-	if clusterID == "" || clusterID == "0" {
-		return errors.New(":cluster_id: url parameter cannot be empty or 0")
+	clusterName := c.Param("cluster_name")
+	clusterID := h.getClusterID(clusterName)
+	if clusterID == 0 {
+		return fmt.Errorf("cluster_name '%s' not found", clusterName)
 	}
-	clusterIDInt, err := strconv.Atoi(clusterID)
-	if err != nil {
-		return errors.New(":cluster_id: url parameter must be a valid integer")
-	}
-	clusterIDUint := uint(clusterIDInt)
 
 	jsonData := resource{}
-	err = c.BindJSON(&jsonData)
+	err := c.BindJSON(&jsonData)
 	if err != nil {
 		log.Println("Unable to parse JSON from request data")
 		return errors.New("Unable to parse JSON from request data: " + err.Error())
@@ -220,14 +269,14 @@ func (h APIHandler) updateResource(c *gin.Context) error {
 		return err
 	}
 
-	tfoResource, tfoResourceSpec, err := jsonData.Parse(clusterIDUint)
+	tfoResource, tfoResourceSpec, err := jsonData.Parse(clusterID)
 	if err != nil {
 		return err
 	}
 
 	cluster := &models.Cluster{
 		Model: gorm.Model{
-			ID: clusterIDUint,
+			ID: clusterID,
 		},
 	}
 	result := h.DB.First(cluster)
@@ -283,20 +332,6 @@ func (h APIHandler) appendClusterNameLabel(tf *tfv1alpha2.Terraform, clusterName
 		tf.Labels = map[string]string{}
 	}
 	tf.Labels["tfo-api.galleybytes.com/cluster-name"] = clusterName
-}
-
-func equalOrGreater(s1, s2 string) bool {
-	i1, err := strconv.Atoi(s1)
-	if err != nil {
-		log.Panic(err)
-	}
-
-	i2, err := strconv.Atoi(s2)
-	if err != nil {
-		log.Panic(err)
-	}
-
-	return i1 >= i2
 }
 
 func compare(s1, op, s2 string) bool {

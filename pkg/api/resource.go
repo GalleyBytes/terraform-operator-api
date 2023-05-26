@@ -128,7 +128,12 @@ func (h APIHandler) ResourcePoll(c *gin.Context) {
 		return
 	}
 	if tf.Status.Stage.Generation != tf.Generation || tf.Status.Stage.Reason != "COMPLETED_APPLY" {
-		c.JSON(http.StatusOK, response(http.StatusOK, fmt.Sprintf("The '%s' workflow has not completed", tf.Name), nil))
+		c.JSON(http.StatusOK, response(http.StatusOK, fmt.Sprintf("The '%s' workflow has not completed.", tf.Name), nil))
+		return
+	}
+	if h.Queue.Len() > 0 {
+		// Wait for all queue to complete before opening up for polling
+		c.JSON(http.StatusOK, response(http.StatusOK, "Waiting for API to complete queue.", nil))
 		return
 	}
 

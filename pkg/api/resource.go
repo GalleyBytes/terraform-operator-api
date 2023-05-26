@@ -144,7 +144,6 @@ func (h APIHandler) ResourcePoll(c *gin.Context) {
 		outputsSecretName = fmt.Sprintf("%-v%s", tf.Status.PodNamePrefix, fmt.Sprint(tf.Generation))
 	}
 	if tf.Spec.OutputsSecret != "" {
-		// https://github.com/isaaguilar/terraform-operator/blob/master/pkg/controllers/terraform_controller.go#L428
 		outputsSecretName = tf.Spec.OutputsSecret
 	}
 	if outputsSecretName == "" {
@@ -156,6 +155,10 @@ func (h APIHandler) ResourcePoll(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
 		return
+	}
+	if originalOutputsSecretName, found := tf.Annotations["tfo.galleybytes.com/outputsSecret"]; found {
+		// When this annotation is found in the tf-resource, rename the secret before returning it
+		secret.Name = originalOutputsSecretName
 	}
 	gvks, _, err := scheme.Scheme.ObjectKinds(secret)
 	if err != nil {

@@ -7,7 +7,6 @@ require (
 	github.com/gin-gonic/gin v1.8.1
 	github.com/golang-jwt/jwt/v4 v4.4.3
 	github.com/isaaguilar/terraform-operator v0.9.0-beta3
-	github.com/mattbaird/jsonpatch v0.0.0-20200820163806-098863c1fc24
 	github.com/spf13/viper v1.12.0
 	gorm.io/driver/postgres v1.3.9
 	gorm.io/gorm v1.23.8
@@ -27,6 +26,7 @@ require (
 	github.com/google/gnostic v0.5.7-v3refs // indirect
 	github.com/google/go-cmp v0.5.9 // indirect
 	github.com/google/gofuzz v1.1.0 // indirect
+	github.com/google/uuid v1.1.2 // indirect
 	github.com/imdario/mergo v0.3.10 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/mailru/easyjson v0.7.6 // indirect

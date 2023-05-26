@@ -15,6 +15,7 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -87,24 +88,21 @@ func worker(queue *deque.Deque[tfv1alpha2.Terraform]) {
 
 		name := string(tf.UID)
 		namespace := "default"
-		labels := tf.Labels
-		if labels == nil {
-			labels = map[string]string{}
-		}
-		labels["tfo-api.galleybytes.com/original-resource-name"] = tf.Name
-		labels["tfo-api.galleybytes.com/original-resource-namespace"] = tf.Namespace
-
-		// modTf as in the modified terraform resource that get added to the remote cluster. This cluster can't have the
+		// modTf as in the modified terraform resource that get added to the hub cluster. This cluster can't have the
 		// same name as any other resource, so we use the uid or the original resource as a unique name for this one.
 		var modTf = tfv1alpha2.Terraform{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:        name,
 				Namespace:   namespace,
 				Annotations: tf.Annotations,
-				Labels:      labels,
+				Labels:      tf.Labels,
 			},
 			Spec: tf.Spec,
 		}
+
+		modSpec(tf, &modTf)
+		addLabel(&modTf, "tfo-api.galleybytes.com/original-resource-name", tf.Name)
+		addLabel(&modTf, "tfo-api.galleybytes.com/original-resource-namespace", tf.Namespace)
 
 		if isNameExists {
 			err := doPatch(modTf, ctx, name, namespace, resourceClient)
@@ -182,6 +180,30 @@ func requeue(queue *deque.Deque[tfv1alpha2.Terraform], tf tfv1alpha2.Terraform, 
 		time.Sleep(15 * time.Second)
 		queue.PushBack(tf)
 	}()
+}
+
+// modSpec handles required changes to prevent conflicts in the hub cluster due to the sharing nature of workspaces
+func modSpec(tf tfv1alpha2.Terraform, modTf *tfv1alpha2.Terraform) {
+	if tf.Spec.OutputsSecret != "" {
+		addAnnotation(modTf, "tfo.galleybytes.com/outputsSecret", tf.Spec.OutputsSecret)
+		modTf.Spec.OutputsSecret = string(uuid.NewUUID())
+	}
+}
+
+// addAnnotation adds annotations to the metadata
+func addAnnotation(modTf *tfv1alpha2.Terraform, key, value string) {
+	if modTf.Annotations == nil {
+		modTf.Annotations = map[string]string{}
+	}
+	modTf.Annotations[key] = value
+}
+
+// modLabels adds labels to the metadata
+func addLabel(modTf *tfv1alpha2.Terraform, key, value string) {
+	if modTf.Labels == nil {
+		modTf.Labels = map[string]string{}
+	}
+	modTf.Labels[key] = value
 }
 
 func pprint(o interface{}) {

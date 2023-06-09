@@ -1,10 +1,10 @@
 package api
 
 import (
+	tfv1beta1 "github.com/galleybytes/terraform-operator/pkg/apis/tf/v1beta1"
+	tfo "github.com/galleybytes/terraform-operator/pkg/client/clientset/versioned"
 	"github.com/gammazero/deque"
 	"github.com/gin-gonic/gin"
-	tfv1alpha2 "github.com/isaaguilar/terraform-operator/pkg/apis/tf/v1alpha2"
-	tfo "github.com/isaaguilar/terraform-operator/pkg/client/clientset/versioned"
 	"gorm.io/gorm"
 	"k8s.io/client-go/kubernetes"
 )
@@ -12,12 +12,12 @@ import (
 type APIHandler struct {
 	Server       *gin.Engine
 	DB           *gorm.DB
-	Queue        *deque.Deque[tfv1alpha2.Terraform]
+	Queue        *deque.Deque[tfv1beta1.Terraform]
 	clientset    kubernetes.Interface
 	tfoclientset tfo.Interface
 }
 
-func NewAPIHandler(db *gorm.DB, queue *deque.Deque[tfv1alpha2.Terraform], clientset kubernetes.Interface, tfoclientset tfo.Interface) *APIHandler {
+func NewAPIHandler(db *gorm.DB, queue *deque.Deque[tfv1beta1.Terraform], clientset kubernetes.Interface, tfoclientset tfo.Interface) *APIHandler {
 	return &APIHandler{
 		Server:       gin.Default(),
 		DB:           db,

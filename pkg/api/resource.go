@@ -10,8 +10,8 @@ import (
 	"strconv"
 
 	"github.com/galleybytes/terraform-operator-api/pkg/common/models"
+	tfv1beta1 "github.com/galleybytes/terraform-operator/pkg/apis/tf/v1beta1"
 	"github.com/gin-gonic/gin"
-	tfv1alpha2 "github.com/isaaguilar/terraform-operator/pkg/apis/tf/v1alpha2"
 	"gorm.io/gorm"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -20,7 +20,7 @@ import (
 )
 
 type resource struct {
-	tfv1alpha2.Terraform `json:",inline"`
+	tfv1beta1.Terraform `json:",inline"`
 	// TFOResourceSpec models.TFOResourceSpec `json:"tfo_resource_spec"`
 	// TFOResource     models.TFOResource     `json:"tfo_resource"`
 }
@@ -122,7 +122,7 @@ func (h APIHandler) ResourcePoll(c *gin.Context) {
 	resourceUUID := c.Param("tfo_resource_uuid")
 
 	// Before checking for resources to return, check that the current generation has completed
-	tf, err := h.tfoclientset.TfV1alpha2().Terraforms("default").Get(c, resourceUUID, metav1.GetOptions{})
+	tf, err := h.tfoclientset.TfV1beta1().Terraforms("default").Get(c, resourceUUID, metav1.GetOptions{})
 	if err != nil {
 		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
 		return
@@ -140,7 +140,7 @@ func (h APIHandler) ResourcePoll(c *gin.Context) {
 	// Check if this contains known resources to return
 	outputsSecretName := ""
 	if tf.Spec.WriteOutputsToStatus {
-		// https://github.com/isaaguilar/terraform-operator/blob/master/pkg/controllers/terraform_controller.go#L278
+		// https://github.com/galleybytes/terraform-operator/blob/master/pkg/controllers/terraform_controller.go#L278
 		outputsSecretName = fmt.Sprintf("%-v%s", tf.Status.PodNamePrefix, fmt.Sprint(tf.Generation))
 	}
 	if tf.Spec.OutputsSecret != "" {
@@ -350,7 +350,7 @@ func (h APIHandler) updateResource(c *gin.Context) error {
 
 // appendClusterNameLabel will hack the cluster name to the resource's labels.
 // This make it easier to identify the origin of the resource in a remote cluster.
-func (h APIHandler) appendClusterNameLabel(tf *tfv1alpha2.Terraform, clusterName string) {
+func (h APIHandler) appendClusterNameLabel(tf *tfv1beta1.Terraform, clusterName string) {
 	if clusterName == "" {
 		return
 	}

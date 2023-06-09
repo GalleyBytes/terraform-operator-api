@@ -9,8 +9,8 @@ import (
 	"os"
 	"time"
 
+	tfv1beta1 "github.com/galleybytes/terraform-operator/pkg/apis/tf/v1beta1"
 	"github.com/gammazero/deque"
-	tfv1alpha2 "github.com/isaaguilar/terraform-operator/pkg/apis/tf/v1alpha2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -23,14 +23,14 @@ import (
 
 var (
 	terraformResource = schema.GroupVersionResource{
-		Group:    tfv1alpha2.SchemeGroupVersion.Group,
-		Version:  tfv1alpha2.SchemeGroupVersion.Version,
+		Group:    tfv1beta1.SchemeGroupVersion.Group,
+		Version:  tfv1beta1.SchemeGroupVersion.Version,
 		Resource: "terraforms",
 	}
 )
 
 // Listens to the terraform resource queue without blocking
-func BackgroundWorker(queue *deque.Deque[tfv1alpha2.Terraform]) {
+func BackgroundWorker(queue *deque.Deque[tfv1beta1.Terraform]) {
 	go worker(queue)
 }
 
@@ -42,7 +42,7 @@ func kubernetesConfig(kubeconfigPath string) *rest.Config {
 	return config
 }
 
-func worker(queue *deque.Deque[tfv1alpha2.Terraform]) {
+func worker(queue *deque.Deque[tfv1beta1.Terraform]) {
 	log.Println("Starting queue listener")
 	ctx := context.TODO()
 	kubeconfig := os.Getenv("KUBECONFIG")
@@ -67,7 +67,7 @@ func worker(queue *deque.Deque[tfv1alpha2.Terraform]) {
 			requeue(queue, tf, fmt.Sprintln("An error occurred listing tf objects"))
 			continue
 		}
-		terraformList := convertTo[tfv1alpha2.TerraformList](unstructedTerraformList)
+		terraformList := convertTo[tfv1beta1.TerraformList](unstructedTerraformList)
 		isNameExists := false
 		isUUIDBelongToThisCluster := false
 		for _, terraform := range terraformList.Items {
@@ -90,7 +90,7 @@ func worker(queue *deque.Deque[tfv1alpha2.Terraform]) {
 		namespace := "default"
 		// modTf as in the modified terraform resource that get added to the hub cluster. This cluster can't have the
 		// same name as any other resource, so we use the uid or the original resource as a unique name for this one.
-		var modTf = tfv1alpha2.Terraform{
+		var modTf = tfv1beta1.Terraform{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:        name,
 				Namespace:   namespace,
@@ -137,10 +137,10 @@ func convertTo[T any](unstructured any) T {
 	return t
 }
 
-func convertTerraformToUnstructuredObject(terraform tfv1alpha2.Terraform) (*unstructured.Unstructured, error) {
+func convertTerraformToUnstructuredObject(terraform tfv1beta1.Terraform) (*unstructured.Unstructured, error) {
 	unstructuredObject := unstructured.Unstructured{
 		Object: map[string]interface{}{
-			"apiVersion": tfv1alpha2.SchemeGroupVersion.String(),
+			"apiVersion": tfv1beta1.SchemeGroupVersion.String(),
 			"kind":       "Terraform",
 			"metadata":   terraform.ObjectMeta,
 			"spec":       terraform.Spec,
@@ -149,7 +149,7 @@ func convertTerraformToUnstructuredObject(terraform tfv1alpha2.Terraform) (*unst
 	return &unstructuredObject, nil
 }
 
-func doCreate(new tfv1alpha2.Terraform, ctx context.Context, namespace string, client dynamic.NamespaceableResourceInterface) error {
+func doCreate(new tfv1beta1.Terraform, ctx context.Context, namespace string, client dynamic.NamespaceableResourceInterface) error {
 	unstructuredTerraform, err := convertTerraformToUnstructuredObject(new)
 	if err != nil {
 		return fmt.Errorf("an error occurred formatting tf object for saving: %v", err)
@@ -174,7 +174,7 @@ func doPatch(new any, ctx context.Context, name, namespace string, client dynami
 	return nil
 }
 
-func requeue(queue *deque.Deque[tfv1alpha2.Terraform], tf tfv1alpha2.Terraform, reason string) {
+func requeue(queue *deque.Deque[tfv1beta1.Terraform], tf tfv1beta1.Terraform, reason string) {
 	log.Println(reason)
 	go func() {
 		time.Sleep(15 * time.Second)
@@ -183,7 +183,7 @@ func requeue(queue *deque.Deque[tfv1alpha2.Terraform], tf tfv1alpha2.Terraform, 
 }
 
 // modSpec handles required changes to prevent conflicts in the hub cluster due to the sharing nature of workspaces
-func modSpec(tf tfv1alpha2.Terraform, modTf *tfv1alpha2.Terraform) {
+func modSpec(tf tfv1beta1.Terraform, modTf *tfv1beta1.Terraform) {
 	if tf.Spec.OutputsSecret != "" {
 		addAnnotation(modTf, "tfo.galleybytes.com/outputsSecret", tf.Spec.OutputsSecret)
 		modTf.Spec.OutputsSecret = string(uuid.NewUUID())
@@ -191,7 +191,7 @@ func modSpec(tf tfv1alpha2.Terraform, modTf *tfv1alpha2.Terraform) {
 }
 
 // addAnnotation adds annotations to the metadata
-func addAnnotation(modTf *tfv1alpha2.Terraform, key, value string) {
+func addAnnotation(modTf *tfv1beta1.Terraform, key, value string) {
 	if modTf.Annotations == nil {
 		modTf.Annotations = map[string]string{}
 	}
@@ -199,7 +199,7 @@ func addAnnotation(modTf *tfv1alpha2.Terraform, key, value string) {
 }
 
 // modLabels adds labels to the metadata
-func addLabel(modTf *tfv1alpha2.Terraform, key, value string) {
+func addLabel(modTf *tfv1beta1.Terraform, key, value string) {
 	if modTf.Labels == nil {
 		modTf.Labels = map[string]string{}
 	}

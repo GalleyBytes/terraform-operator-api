@@ -7,9 +7,9 @@ import (
 	"github.com/galleybytes/terraform-operator-api/internal/qworker"
 	"github.com/galleybytes/terraform-operator-api/pkg/api"
 	"github.com/galleybytes/terraform-operator-api/pkg/common/db"
+	tfv1beta1 "github.com/galleybytes/terraform-operator/pkg/apis/tf/v1beta1"
+	tfo "github.com/galleybytes/terraform-operator/pkg/client/clientset/versioned"
 	"github.com/gammazero/deque"
-	tfv1alpha2 "github.com/isaaguilar/terraform-operator/pkg/apis/tf/v1alpha2"
-	tfo "github.com/isaaguilar/terraform-operator/pkg/client/clientset/versioned"
 	"github.com/spf13/viper"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -27,7 +27,7 @@ func main() {
 	clientset := kubernetes.NewForConfigOrDie(NewConfigOrDie(os.Getenv("KUBECONFIG")))
 	tfoclientset := tfo.NewForConfigOrDie(NewConfigOrDie(os.Getenv("KUBECONFIG")))
 	database := db.Init(dbUrl)
-	queue := deque.Deque[tfv1alpha2.Terraform]{}
+	queue := deque.Deque[tfv1beta1.Terraform]{}
 
 	qworker.BackgroundWorker(&queue)
 

@@ -13,6 +13,8 @@ import (
 	tfv1beta1 "github.com/galleybytes/terraform-operator/pkg/apis/tf/v1beta1"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
+	corev1 "k8s.io/api/core/v1"
+	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	serializer "k8s.io/apimachinery/pkg/runtime/serializer/json"
@@ -77,6 +79,11 @@ func (r resource) Parse(clusterID uint) (*models.TFOResource, *models.TFOResourc
 
 func (h APIHandler) AddCluster(c *gin.Context) {
 
+	// TODO cluster name must also have a tenant id which will need to come from the JWT token assigned to the request
+	// For this, I still need to implemet a registration service.
+	tenantId := "internal"
+	_ = tenantId
+
 	jsonData := struct {
 		ClusterName string `json:"cluster_name"`
 	}{}
@@ -100,7 +107,53 @@ func (h APIHandler) AddCluster(c *gin.Context) {
 		return
 	}
 
+	// Check existance of vcluster in namespace
+	namespaceName := tenantId + "-" + cluster.Name
+	err = h.createNamespace(c, namespaceName)
+	if err != nil {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
+		return
+	}
+
+	err = h.createVirtualCluster(c, namespaceName)
+	if err != nil {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
+		return
+	}
+
 	c.JSON(http.StatusOK, response(http.StatusOK, "", []models.Cluster{cluster}))
+}
+
+func (h APIHandler) createNamespace(c *gin.Context, namespaceName string) error {
+	_, err := h.clientset.CoreV1().Namespaces().Get(c, namespaceName, metav1.GetOptions{})
+	if err != nil {
+		if kerrors.IsNotFound(err) {
+			_, err = h.clientset.CoreV1().Namespaces().Create(c, &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        namespaceName,
+					Labels:      map[string]string{},
+					Annotations: map[string]string{},
+				},
+				Spec: corev1.NamespaceSpec{},
+			}, metav1.CreateOptions{})
+			if err != nil {
+				if !kerrors.IsAlreadyExists(err) {
+					return err
+				}
+			}
+		} else {
+			return err
+		}
+	}
+	return nil
+}
+
+func (h APIHandler) createVirtualCluster(c *gin.Context, namespace string) error {
+	// Add vcluster install
+
+	// Should this call block until the vcluster is up and running?
+
+	return nil
 }
 
 func (h APIHandler) getClusterID(clusterName string) uint {
@@ -118,6 +171,8 @@ func (h APIHandler) getClusterID(clusterName string) uint {
 //
 //	normal workflow are ignored. Is it possible to extend get a more extensive list of resources to return?
 //	One issue with this is that TFO does not have a method to track those resources.
+//
+// TODO #2 require a special return labels for resources to return back to originating cluster
 func (h APIHandler) ResourcePoll(c *gin.Context) {
 	resourceUUID := c.Param("tfo_resource_uuid")
 
@@ -219,6 +274,7 @@ func (h APIHandler) addResource(c *gin.Context) error {
 	if clusterID == 0 {
 		return fmt.Errorf("cluster_name '%s' not found", clusterName)
 	}
+
 	jsonData := resource{}
 	err := c.BindJSON(&jsonData)
 	if err != nil {

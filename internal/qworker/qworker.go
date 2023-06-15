@@ -3,11 +3,9 @@ package qworker
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"time"
 
@@ -130,16 +128,18 @@ func worker(queue *deque.Deque[tfv1beta1.Terraform]) {
 			continue
 		}
 
-		// var vclusterDynamicClient dynamic.Interface
-		// _ = vclusterDynamicClient
-		// http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+		// Cleanup fields that shouldn't exist when creating or patching resources
+		tf.SetResourceVersion("")
+		tf.SetUID("")
+
 		vclusterConfig := kubernetesConfig(kubeConfigFilename.Name())
 		vclusterConfig.Host = fmt.Sprintf("tfo-virtual-cluster.%s.svc", namespace)
-		config := &tls.Config{
-			InsecureSkipVerify: true,
-		}
-		vclusterConfig.Transport = &http.Transport{TLSClientConfig: config}
+		// We have to make an insecure request to the cluster because the vcluster has a cert thats valid for localhost.
+		// To do so we set the config to insecure and we remove the CAData. We have to leave
+		// CertData and CertFile which are used as authorization to the vcluster.
 		vclusterConfig.Insecure = true
+		vclusterConfig.TLSClientConfig.CAData = nil
+
 		vclusterDynamicClient := dynamic.NewForConfigOrDie(vclusterConfig)
 
 		vclusterResourceClient := vclusterDynamicClient.Resource(terraformResource)
@@ -156,7 +156,7 @@ func worker(queue *deque.Deque[tfv1beta1.Terraform]) {
 			// 	isUUIDBelongToThisCluster = true
 			// 	break
 			// }
-			if terraform.Name == string(tf.UID) {
+			if terraform.Name == tf.Name {
 				isNameExists = true
 				break
 			}

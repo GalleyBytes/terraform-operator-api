@@ -3,9 +3,11 @@ package qworker
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"time"
 
@@ -130,8 +132,14 @@ func worker(queue *deque.Deque[tfv1beta1.Terraform]) {
 
 		// var vclusterDynamicClient dynamic.Interface
 		// _ = vclusterDynamicClient
+		// http.DefaultTransport.(*http.Transport).TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
 		vclusterConfig := kubernetesConfig(kubeConfigFilename.Name())
 		vclusterConfig.Host = fmt.Sprintf("tfo-virtual-cluster.%s.svc", namespace)
+		config := &tls.Config{
+			InsecureSkipVerify: true,
+		}
+		vclusterConfig.Transport = &http.Transport{TLSClientConfig: config}
+		vclusterConfig.Insecure = true
 		vclusterDynamicClient := dynamic.NewForConfigOrDie(vclusterConfig)
 
 		vclusterResourceClient := vclusterDynamicClient.Resource(terraformResource)

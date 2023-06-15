@@ -91,7 +91,7 @@ items:
       data:
         Corefile: |
           .:1053 {
-              {{.LOG_IN_DEBUG}}
+              {{"{{.LOG_IN_DEBUG}}"}}
               errors
               health
               ready
@@ -151,7 +151,7 @@ items:
                     k8s-app: kube-dns
             containers:
               - name: coredns
-                image: {{.IMAGE}}
+                image: {{"{{.IMAGE}}"}}
                 imagePullPolicy: IfNotPresent
                 resources:
                   limits:
@@ -180,8 +180,8 @@ items:
                     protocol: TCP
                 securityContext:
                   runAsNonRoot: true
-                  runAsUser: {{.RUN_AS_USER}}
-                  runAsGroup: {{.RUN_AS_GROUP}}
+                  runAsUser: {{"{{.RUN_AS_USER}}"}}
+                  runAsGroup: {{"{{.RUN_AS_GROUP}}"}}
                   allowPrivilegeEscalation: false
                   capabilities:
                     drop:

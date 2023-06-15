@@ -2,16 +2,20 @@ package api
 
 import (
 	"bytes"
+	_ "embed"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"os"
 	"strconv"
 
 	"github.com/galleybytes/terraform-operator-api/pkg/common/models"
+	"github.com/galleybytes/terraform-operator-api/pkg/util"
 	tfv1beta1 "github.com/galleybytes/terraform-operator/pkg/apis/tf/v1beta1"
 	"github.com/gin-gonic/gin"
+	"github.com/isaaguilar/kedge"
 	"gorm.io/gorm"
 	corev1 "k8s.io/api/core/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
@@ -20,6 +24,9 @@ import (
 	serializer "k8s.io/apimachinery/pkg/runtime/serializer/json"
 	"k8s.io/client-go/kubernetes/scheme"
 )
+
+//go:embed manifests/vcluster.tpl.yaml
+var defaultVirtualClusterManifestTemplate string
 
 type resource struct {
 	tfv1beta1.Terraform `json:",inline"`
@@ -149,10 +156,23 @@ func (h APIHandler) createNamespace(c *gin.Context, namespaceName string) error 
 }
 
 func (h APIHandler) createVirtualCluster(c *gin.Context, namespace string) error {
-	// Add vcluster install
+	tempfile, err := os.CreateTemp(util.Tmpdir(), "*manifest")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tempfile.Name())
+	fmt.Println("Created file", tempfile.Name())
 
+	err = os.WriteFile(tempfile.Name(), []byte(defaultVirtualClusterManifestTemplate), 0755)
+	if err != nil {
+		return fmt.Errorf("whoa! error here: %s", err)
+	}
+
+	err = kedge.Apply(kedge.KubernetesConfig(os.Getenv("KUBECONFIG")), tempfile.Name(), namespace, []string{})
+	if err != nil {
+		return fmt.Errorf("could not create vcluster: %s", err)
+	}
 	// Should this call block until the vcluster is up and running?
-
 	return nil
 }
 

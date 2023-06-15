@@ -7,12 +7,14 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 )
 
 type APIHandler struct {
 	Server       *gin.Engine
 	DB           *gorm.DB
 	Queue        *deque.Deque[tfv1beta1.Terraform]
+	config       *rest.Config
 	clientset    kubernetes.Interface
 	tfoclientset tfo.Interface
 }

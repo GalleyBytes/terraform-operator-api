@@ -162,24 +162,6 @@ func worker(queue *deque.Deque[tfv1beta1.Terraform]) {
 			}
 		}
 
-		// name := string(tf.UID)
-		// namespace := "default"
-		// modTf as in the modified terraform resource that get added to the hub cluster. This cluster can't have the
-		// same name as any other resource, so we use the uid or the original resource as a unique name for this one.
-		// var modTf = tfv1beta1.Terraform{
-		// 	ObjectMeta: metav1.ObjectMeta{
-		// 		Name:        name,
-		// 		Namespace:   namespace,
-		// 		Annotations: tf.Annotations,
-		// 		Labels:      tf.Labels,
-		// 	},
-		// 	Spec: tf.Spec,
-		// }
-
-		// modSpec(tf, &modTf)
-		// addLabel(&modTf, "tfo-api.galleybytes.com/original-resource-name", tf.Name)
-		// addLabel(&modTf, "tfo-api.galleybytes.com/original-resource-namespace", tf.Namespace)
-
 		if isNameExists {
 			err := doPatch(tf, ctx, tf.Name, tf.Namespace, vclusterResourceClient)
 			if err != nil {

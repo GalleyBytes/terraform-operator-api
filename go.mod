@@ -7,7 +7,7 @@ require (
 	github.com/gammazero/deque v0.2.1
 	github.com/gin-gonic/gin v1.8.1
 	github.com/golang-jwt/jwt/v4 v4.4.3
-	github.com/isaaguilar/kedge v0.0.0-20230615210403-e62722d76e06
+	github.com/isaaguilar/kedge v0.0.0-20230616161426-17e452296bfc
 	github.com/spf13/viper v1.12.0
 	gorm.io/driver/postgres v1.3.9
 	gorm.io/gorm v1.23.8
@@ -16,7 +16,7 @@ require (
 	k8s.io/client-go v0.27.3
 )
 
-// replace github.com/isaaguilar/kedge v0.0.0-20230615043904-8e2fcb37bb11 => /tmp/vgo
+// replace github.com/isaaguilar/kedge v0.0.0-20230615210403-e62722d76e06 => /tmp/vgo
 
 require (
 	github.com/Masterminds/goutils v1.1.1 // indirect
@@ -50,6 +50,7 @@ require (
 	google.golang.org/appengine v1.6.7 // indirect
 	gopkg.in/inf.v0 v0.9.1 // indirect
 	k8s.io/klog/v2 v2.100.1 // indirect
+	// k8s.io/kube-openapi v0.0.0-20230501164219-8b0f38b5fd1f // I WANT THIS ONE
 	k8s.io/kube-openapi v0.0.0-20230501164219-8b0f38b5fd1f
 	k8s.io/utils v0.0.0-20230505201702-9f6742963106 // indirect
 	sigs.k8s.io/controller-runtime v0.15.0 // indirect

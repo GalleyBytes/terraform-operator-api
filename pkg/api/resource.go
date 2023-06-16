@@ -15,14 +15,17 @@ import (
 	"github.com/galleybytes/terraform-operator-api/pkg/common/models"
 	"github.com/galleybytes/terraform-operator-api/pkg/util"
 	tfv1beta1 "github.com/galleybytes/terraform-operator/pkg/apis/tf/v1beta1"
+	tfo "github.com/galleybytes/terraform-operator/pkg/client/clientset/versioned"
 	"github.com/gin-gonic/gin"
 	"github.com/isaaguilar/kedge"
+	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
 	corev1 "k8s.io/api/core/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	serializer "k8s.io/apimachinery/pkg/runtime/serializer/json"
+	"k8s.io/apimachinery/pkg/runtime/schema"
+	k8sjson "k8s.io/apimachinery/pkg/runtime/serializer/json"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -131,7 +134,7 @@ func (h APIHandler) AddCluster(c *gin.Context) {
 	// applyRawManifest will create the VCluster by applying the static manifest template
 	err = h.applyRawManifest(c, kedge.KubernetesConfig(os.Getenv("KUBECONFIG")), []byte(defaultVirtualClusterManifestTemplate), namespaceName)
 	if err != nil {
-		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("could not create vcluster: %s", err), nil))
 		return
 	}
 
@@ -177,7 +180,7 @@ func (h APIHandler) applyRawManifest(c *gin.Context, config *rest.Config, raw []
 
 	err = kedge.Apply(config, tempfile.Name(), namespace, []string{})
 	if err != nil {
-		return fmt.Errorf("could not create vcluster: %s", err)
+		return fmt.Errorf("error applying manifest: %s", err)
 	}
 	// Should this call block until the vcluster is up and running?
 	return nil
@@ -193,18 +196,28 @@ func (h APIHandler) getClusterID(clusterName string) uint {
 }
 
 // ResourcePoll is a short poll that checks and returns resources created from the tf resource's workflow
-//
-// TODO Currently only secrets are expected to be created by the workflow. Resources created outside of the
-//
-//	normal workflow are ignored. Is it possible to extend get a more extensive list of resources to return?
-//	One issue with this is that TFO does not have a method to track those resources.
-//
-// TODO #2 require a special return labels for resources to return back to originating cluster
+// that have the correct label and annotation value.
 func (h APIHandler) ResourcePoll(c *gin.Context) {
-	resourceUUID := c.Param("tfo_resource_uuid")
+	clusterName := c.Param("cluster_name")
+	clusterID := h.getClusterID(clusterName)
+	if clusterID == 0 {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("cluster_name '%s' not found", clusterName), nil))
+		return
+	}
+
+	name := c.Param("name")
+	namespace := c.Param("namespace")
+
+	config, err := getVclusterConfig(h.clientset, "internal", clusterName)
+	if err != nil {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
+		return
+	}
+	tfoclientset := tfo.NewForConfigOrDie(config)
+	clientset := kubernetes.NewForConfigOrDie(config)
 
 	// Before checking for resources to return, check that the current generation has completed
-	tf, err := h.tfoclientset.TfV1beta1().Terraforms("default").Get(c, resourceUUID, metav1.GetOptions{})
+	tf, err := tfoclientset.TfV1beta1().Terraforms(namespace).Get(c, name, metav1.GetOptions{})
 	if err != nil {
 		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
 		return
@@ -219,49 +232,106 @@ func (h APIHandler) ResourcePoll(c *gin.Context) {
 		return
 	}
 
-	// Check if this contains known resources to return
-	outputsSecretName := ""
-	if tf.Spec.WriteOutputsToStatus {
-		// https://github.com/galleybytes/terraform-operator/blob/master/pkg/controllers/terraform_controller.go#L278
-		outputsSecretName = fmt.Sprintf("%-v%s", tf.Status.PodNamePrefix, fmt.Sprint(tf.Generation))
-	}
-	if tf.Spec.OutputsSecret != "" {
-		outputsSecretName = tf.Spec.OutputsSecret
-	}
-	if outputsSecretName == "" {
-		c.JSON(http.StatusOK, response(http.StatusOK, fmt.Sprintf("The '%s' workflow does not create secrets", tf.Name), nil))
-	}
+	resourceList := corev1.List{}
+	resourceList.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   "",
+		Version: "v1",
+		Kind:    "List",
+	})
 
-	secretClient := h.clientset.CoreV1().Secrets("default")
-	secret, err := secretClient.Get(c, outputsSecretName, metav1.GetOptions{})
+	annotationKey := "tfo-api.galleybytes.com/sync-upon-completion-of"
+	labelSelector := "tfo-api.galleybytes.com/sync"
+	secrets, err := clientset.CoreV1().Secrets(namespace).List(c, metav1.ListOptions{
+		LabelSelector: labelSelector, // Find resources when the key exists
+	})
 	if err != nil {
 		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
 		return
 	}
-	if originalOutputsSecretName, found := tf.Annotations["tfo.galleybytes.com/outputsSecret"]; found {
-		// When this annotation is found in the tf-resource, rename the secret before returning it
-		secret.Name = originalOutputsSecretName
+	for _, secret := range secrets.Items {
+		syncUponCompletionOf := []string{}
+		err := yaml.Unmarshal([]byte(secret.Annotations[annotationKey]), &syncUponCompletionOf)
+		if err != nil {
+			log.Printf("ERROR: sync labels is improperly formatted for %s/%s/%s", clusterName, namespace, secret.Name)
+			continue
+		}
+		if !util.Contains(syncUponCompletionOf, name) {
+			continue
+		}
+
+		gvks, _, err := scheme.Scheme.ObjectKinds(&secret)
+		if err != nil {
+			c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
+			return
+		}
+		if len(gvks) == 0 {
+			c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, "Could not decode secret GroupVersionKind", nil))
+			return
+		}
+		secret.SetGroupVersionKind(gvks[0])
+
+		buf := bytes.NewBuffer([]byte{})
+		k8sjson.NewSerializer(k8sjson.DefaultMetaFactory, runtime.NewScheme(), runtime.NewScheme(), true).Encode(&secret, buf)
+
+		resourceList.Items = append(resourceList.Items, runtime.RawExtension{
+			Raw:    buf.Bytes(),
+			Object: &secret,
+		})
 	}
-	gvks, _, err := scheme.Scheme.ObjectKinds(secret)
+
+	configMaps, err := clientset.CoreV1().ConfigMaps(namespace).List(c, metav1.ListOptions{})
 	if err != nil {
 		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
 		return
 	}
-	if len(gvks) == 0 {
-		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, "Resource is does not have a registered version", nil))
-		return
+	for _, configMap := range configMaps.Items {
+		syncUponCompletionOf := []string{}
+		err := yaml.Unmarshal([]byte(configMap.Annotations[annotationKey]), &syncUponCompletionOf)
+		if err != nil {
+			log.Printf("ERROR: sync labels is improperly formatted for %s/%s/%s", clusterName, namespace, configMap.Name)
+			continue
+		}
+		if !util.Contains(syncUponCompletionOf, name) {
+			continue
+		}
+
+		gvks, _, err := scheme.Scheme.ObjectKinds(&configMap)
+		if err != nil {
+			c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
+			return
+		}
+		if len(gvks) == 0 {
+			c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, "Could not decode configMap GroupVersionKind", nil))
+			return
+		}
+		configMap.SetGroupVersionKind(gvks[0])
+
+		buf := bytes.NewBuffer([]byte{})
+		k8sjson.NewSerializer(k8sjson.DefaultMetaFactory, runtime.NewScheme(), runtime.NewScheme(), true).Encode(&configMap, buf)
+
+		// tf.Spec.
+		resourceList.Items = append(resourceList.Items, runtime.RawExtension{
+			Raw:    buf.Bytes(),
+			Object: &configMap,
+		})
 	}
-	secret.SetGroupVersionKind(gvks[0])
 
-	buf := bytes.NewBuffer([]byte{})
-	serializer.
-		NewSerializer(serializer.DefaultMetaFactory, runtime.NewScheme(), runtime.NewScheme(), true).
-		Encode(secret, buf)
-
-	resources := []string{}
-	resources = append(resources, buf.String())
-
+	resources := [][]byte{}
+	resources = append(resources, raw(resourceList))
 	c.JSON(http.StatusOK, response(http.StatusOK, "", resources))
+}
+
+func raw(o interface{}) []byte {
+	b, err := json.Marshal(o)
+	if err != nil {
+		log.Panic(err)
+	}
+	var out bytes.Buffer
+	err = json.Indent(&out, b, "", "  ")
+	if err != nil {
+		log.Panic(err)
+	}
+	return out.Bytes()
 }
 
 func (h APIHandler) SyncEvent(c *gin.Context) {
@@ -301,9 +371,6 @@ func (h APIHandler) syncDependencies(c *gin.Context) error {
 		if err != nil {
 			return err
 		}
-
-		log.Printf("%+v\n", config)
-
 		return h.applyRawManifest(c, config, raw, string(namespace))
 	}
 	return nil

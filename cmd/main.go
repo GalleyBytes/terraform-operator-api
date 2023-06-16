@@ -8,7 +8,6 @@ import (
 	"github.com/galleybytes/terraform-operator-api/pkg/api"
 	"github.com/galleybytes/terraform-operator-api/pkg/common/db"
 	tfv1beta1 "github.com/galleybytes/terraform-operator/pkg/apis/tf/v1beta1"
-	tfo "github.com/galleybytes/terraform-operator/pkg/client/clientset/versioned"
 	"github.com/gammazero/deque"
 	"github.com/spf13/viper"
 	"k8s.io/client-go/kubernetes"
@@ -25,13 +24,12 @@ func main() {
 	dbUrl := viper.Get("DB_URL").(string)
 
 	clientset := kubernetes.NewForConfigOrDie(NewConfigOrDie(os.Getenv("KUBECONFIG")))
-	tfoclientset := tfo.NewForConfigOrDie(NewConfigOrDie(os.Getenv("KUBECONFIG")))
 	database := db.Init(dbUrl)
 	queue := deque.Deque[tfv1beta1.Terraform]{}
 
 	qworker.BackgroundWorker(&queue)
 
-	apiHandler := api.NewAPIHandler(database, &queue, clientset, tfoclientset)
+	apiHandler := api.NewAPIHandler(database, &queue, clientset)
 	apiHandler.RegisterRoutes()
 	apiHandler.Server.Run(port)
 }

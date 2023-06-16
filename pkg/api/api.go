@@ -40,6 +40,7 @@ func (h APIHandler) RegisterRoutes() {
 	cluster := routes.Group("/cluster")
 	cluster.POST("/", h.AddCluster) // Resource from Add/Update/Delete event
 	cluster.GET("/:cluster_id", h.GetCluster)
+	cluster.PUT("/:cluster_name/sync-dependencies", h.SyncEvent)
 	cluster.POST("/:cluster_name/event", h.ResourceEvent) // routes.GET("/cluster-name/:cluster_name", h.GetCluster) // to be removed
 	cluster.PUT("/:cluster_name/event", h.ResourceEvent)
 	cluster.GET("/:cluster_id/resources", h.GetClustersResources) // List Resources

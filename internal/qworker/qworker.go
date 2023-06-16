@@ -70,6 +70,27 @@ func worker(queue *deque.Deque[tfv1beta1.Terraform]) {
 			continue
 		}
 
+		// Get this cluster's tf resources to check if we accidentally queued it up
+		resourceClient := dynamicClient.Resource(terraformResource)
+		unstructedTerraformList, err := resourceClient.List(ctx, metav1.ListOptions{})
+		if err != nil {
+			requeue(queue, tf, fmt.Sprintf("An error occurred listing tf objects: %s", err))
+			continue
+		}
+		terraformList := convertTo[tfv1beta1.TerraformList](unstructedTerraformList)
+		isUUIDBelongToThisCluster := false
+		for _, terraform := range terraformList.Items {
+			if terraform.UID == tf.UID {
+				isUUIDBelongToThisCluster = true
+				break
+			}
+		}
+		if isUUIDBelongToThisCluster {
+			// The UUID matches another UUID which only happens for resources creatd for this cluster
+			log.Println("This resource is not managed by the API")
+			continue
+		}
+
 		// With the clusterName, check out the vcluster config
 		namespace := tenantId + "-" + clusterName
 		secret, err := k8sclient.CoreV1().Secrets(namespace).Get(ctx, "vc-tfo-virtual-cluster", metav1.GetOptions{})
@@ -99,39 +120,6 @@ func worker(queue *deque.Deque[tfv1beta1.Terraform]) {
 			continue
 		}
 
-		// List resources and check
-		// 1) UUID exists or
-		// 2) UUID-name exists
-		resourceClient := dynamicClient.Resource(terraformResource)
-		unstructedTerraformList, err := resourceClient.List(ctx, metav1.ListOptions{})
-		if err != nil {
-			requeue(queue, tf, fmt.Sprintf("An error occurred listing tf objects: %s", err))
-			continue
-		}
-		terraformList := convertTo[tfv1beta1.TerraformList](unstructedTerraformList)
-		// isNameExists := false
-		isUUIDBelongToThisCluster := false
-		for _, terraform := range terraformList.Items {
-			if terraform.UID == tf.UID {
-				isUUIDBelongToThisCluster = true
-				break
-			}
-			// if terraform.Name == string(tf.UID) {
-			// 	isNameExists = true
-			// 	break
-			// }
-		}
-
-		if isUUIDBelongToThisCluster {
-			// The UUID matches another UUID which only happens for resources creatd for this cluster
-			log.Println("This resource is not managed by the API")
-			continue
-		}
-
-		// Cleanup fields that shouldn't exist when creating or patching resources
-		tf.SetResourceVersion("")
-		tf.SetUID("")
-
 		vclusterConfig := kubernetesConfig(kubeConfigFilename.Name())
 		vclusterConfig.Host = fmt.Sprintf("tfo-virtual-cluster.%s.svc", namespace)
 		// We have to make an insecure request to the cluster because the vcluster has a cert thats valid for localhost.
@@ -142,6 +130,8 @@ func worker(queue *deque.Deque[tfv1beta1.Terraform]) {
 
 		vclusterDynamicClient := dynamic.NewForConfigOrDie(vclusterConfig)
 
+		// Get a list of resources in the vcluster to see if the resource already exists.
+		// This determines whether to patch or create.
 		vclusterResourceClient := vclusterDynamicClient.Resource(terraformResource)
 		vclusterUnstructedTerraformList, err := vclusterResourceClient.List(ctx, metav1.ListOptions{})
 		if err != nil {
@@ -150,18 +140,16 @@ func worker(queue *deque.Deque[tfv1beta1.Terraform]) {
 		}
 		vclusterTerraformList := convertTo[tfv1beta1.TerraformList](vclusterUnstructedTerraformList)
 		isNameExists := false
-		// isUUIDBelongToThisCluster := false
 		for _, terraform := range vclusterTerraformList.Items {
-			// if terraform.UID == tf.UID {
-			// 	isUUIDBelongToThisCluster = true
-			// 	break
-			// }
 			if terraform.Name == tf.Name {
 				isNameExists = true
 				break
 			}
 		}
 
+		// Cleanup fields that shouldn't exist when creating or patching resources
+		tf.SetResourceVersion("")
+		tf.SetUID("")
 		if isNameExists {
 			err := doPatch(tf, ctx, tf.Name, tf.Namespace, vclusterResourceClient)
 			if err != nil {

@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	_ "embed"
 	"encoding/json"
 	"errors"
@@ -22,11 +23,15 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	serializer "k8s.io/apimachinery/pkg/runtime/serializer/json"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 )
 
 //go:embed manifests/vcluster.tpl.yaml
 var defaultVirtualClusterManifestTemplate string
+
+type rawData map[string][]byte
 
 type resource struct {
 	tfv1beta1.Terraform `json:",inline"`
@@ -122,7 +127,9 @@ func (h APIHandler) AddCluster(c *gin.Context) {
 		return
 	}
 
-	err = h.createVirtualCluster(c, namespaceName)
+	// TODO expand the manifest file to be a variable to change the creation options of the vcluster
+	// applyRawManifest will create the VCluster by applying the static manifest template
+	err = h.applyRawManifest(c, kedge.KubernetesConfig(os.Getenv("KUBECONFIG")), []byte(defaultVirtualClusterManifestTemplate), namespaceName)
 	if err != nil {
 		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
 		return
@@ -155,7 +162,7 @@ func (h APIHandler) createNamespace(c *gin.Context, namespaceName string) error 
 	return nil
 }
 
-func (h APIHandler) createVirtualCluster(c *gin.Context, namespace string) error {
+func (h APIHandler) applyRawManifest(c *gin.Context, config *rest.Config, raw []byte, namespace string) error {
 	tempfile, err := os.CreateTemp(util.Tmpdir(), "*manifest")
 	if err != nil {
 		return err
@@ -163,12 +170,12 @@ func (h APIHandler) createVirtualCluster(c *gin.Context, namespace string) error
 	defer os.Remove(tempfile.Name())
 	fmt.Println("Created file", tempfile.Name())
 
-	err = os.WriteFile(tempfile.Name(), []byte(defaultVirtualClusterManifestTemplate), 0755)
+	err = os.WriteFile(tempfile.Name(), raw, 0755)
 	if err != nil {
 		return fmt.Errorf("whoa! error here: %s", err)
 	}
 
-	err = kedge.Apply(kedge.KubernetesConfig(os.Getenv("KUBECONFIG")), tempfile.Name(), namespace, []string{})
+	err = kedge.Apply(config, tempfile.Name(), namespace, []string{})
 	if err != nil {
 		return fmt.Errorf("could not create vcluster: %s", err)
 	}
@@ -255,6 +262,83 @@ func (h APIHandler) ResourcePoll(c *gin.Context) {
 	resources = append(resources, buf.String())
 
 	c.JSON(http.StatusOK, response(http.StatusOK, "", resources))
+}
+
+func (h APIHandler) SyncEvent(c *gin.Context) {
+	if c.Request.Method == http.MethodPut {
+		err := h.syncDependencies(c)
+		if err != nil {
+			log.Println(err)
+			c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
+			return
+		}
+		c.JSON(http.StatusNoContent, nil)
+		return
+	}
+}
+
+func (h APIHandler) syncDependencies(c *gin.Context) error {
+	clusterName := c.Param("cluster_name")
+	clusterID := h.getClusterID(clusterName)
+	if clusterID == 0 {
+		return fmt.Errorf("cluster_name '%s' not found", clusterName)
+	}
+
+	kedge.KubernetesConfig(os.Getenv("KUBECONFIG"))
+
+	jsonData := rawData{}
+	err := c.BindJSON(&jsonData)
+	if err != nil {
+		log.Println("Unable to parse JSON from request data")
+		return errors.New("Unable to parse JSON from request data: " + err.Error())
+	}
+
+	raw := jsonData["raw"]
+	namespace := jsonData["namespace"]
+	if raw != nil && namespace != nil {
+
+		config, err := getVclusterConfig(h.clientset, "internal", clusterName)
+		if err != nil {
+			return err
+		}
+
+		log.Printf("%+v\n", config)
+
+		return h.applyRawManifest(c, config, raw, string(namespace))
+	}
+	return nil
+}
+
+func getVclusterConfig(clientset kubernetes.Interface, tenantId, clusterName string) (*rest.Config, error) {
+	// With the clusterName, check out the vcluster config
+	namespace := tenantId + "-" + clusterName
+	secret, err := clientset.CoreV1().Secrets(namespace).Get(context.TODO(), "vc-tfo-virtual-cluster", metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	kubeConfigData := secret.Data["config"]
+	if len(kubeConfigData) == 0 {
+		return nil, errors.New("no config data found for vcluster kubeconfig")
+	}
+
+	kubeConfigFilename, err := os.CreateTemp(util.Tmpdir(), "kubeconfig-*")
+	if err != nil {
+		return nil, fmt.Errorf("could nto create tempfile to write vcluster kubeconfig: %s", err)
+	}
+	defer os.Remove(kubeConfigFilename.Name())
+	err = os.WriteFile(kubeConfigFilename.Name(), kubeConfigData, 0755)
+	if err != nil {
+		return nil, fmt.Errorf("the vcluster kubeconfig file could not be saved: %s", err)
+	}
+
+	// We have to make an insecure request to the cluster because the vcluster has a cert thats valid for localhost.
+	// To do so we set the config to insecure and we remove the CAData. We have to leave
+	// CertData and CertFile which are used as authorization to the vcluster.
+	config := kedge.KubernetesConfig(kubeConfigFilename.Name())
+	config.Host = fmt.Sprintf("tfo-virtual-cluster.%s.svc", namespace)
+	config.Insecure = true
+	config.TLSClientConfig.CAData = nil
+	return config, nil
 }
 
 func (h APIHandler) ResourceEvent(c *gin.Context) {

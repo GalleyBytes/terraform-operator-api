@@ -1,6 +1,9 @@
 package util
 
-import "os"
+import (
+	"os"
+	"reflect"
+)
 
 func Tmpdir() string {
 	t := os.TempDir()
@@ -9,4 +12,14 @@ func Tmpdir() string {
 		return "."
 	}
 	return t
+}
+
+// Contains is a very slow containment check for an item in a list
+func Contains[T any](things []T, thing T) bool {
+	for _, t := range things {
+		if reflect.DeepEqual(thing, t) {
+			return true
+		}
+	}
+	return false
 }

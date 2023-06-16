@@ -11,15 +11,19 @@ import (
 
 	"github.com/galleybytes/terraform-operator-api/pkg/util"
 	tfv1beta1 "github.com/galleybytes/terraform-operator/pkg/apis/tf/v1beta1"
+	tfo "github.com/galleybytes/terraform-operator/pkg/client/clientset/versioned"
 	"github.com/gammazero/deque"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	k8sjson "k8s.io/apimachinery/pkg/runtime/serializer/json"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/uuid"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -120,28 +124,25 @@ func worker(queue *deque.Deque[tfv1beta1.Terraform]) {
 			continue
 		}
 
-		vclusterConfig := kubernetesConfig(kubeConfigFilename.Name())
-		vclusterConfig.Host = fmt.Sprintf("tfo-virtual-cluster.%s.svc", namespace)
 		// We have to make an insecure request to the cluster because the vcluster has a cert thats valid for localhost.
 		// To do so we set the config to insecure and we remove the CAData. We have to leave
 		// CertData and CertFile which are used as authorization to the vcluster.
+		vclusterConfig := kubernetesConfig(kubeConfigFilename.Name())
+		vclusterConfig.Host = fmt.Sprintf("tfo-virtual-cluster.%s.svc", namespace)
 		vclusterConfig.Insecure = true
 		vclusterConfig.TLSClientConfig.CAData = nil
+		vclusterTFOClient := tfo.NewForConfigOrDie(vclusterConfig)
 
-		vclusterDynamicClient := dynamic.NewForConfigOrDie(vclusterConfig)
-
-		// Get a list of resources in the vcluster to see if the resource already exists.
-		// This determines whether to patch or create.
-		vclusterResourceClient := vclusterDynamicClient.Resource(terraformResource)
-		vclusterUnstructedTerraformList, err := vclusterResourceClient.List(ctx, metav1.ListOptions{})
+		// Get a list of resources in the vcluster to see if the resource already exists to determines whether to patch or create.
+		terraforms, err := vclusterTFOClient.TfV1beta1().Terraforms(tf.Namespace).List(ctx, metav1.ListOptions{})
 		if err != nil {
 			requeue(queue, tf, fmt.Sprintf("An error occurred listing tf objects in vcluster: %s", err))
 			continue
 		}
-		vclusterTerraformList := convertTo[tfv1beta1.TerraformList](vclusterUnstructedTerraformList)
 		isNameExists := false
-		for _, terraform := range vclusterTerraformList.Items {
+		for _, terraform := range terraforms.Items {
 			if terraform.Name == tf.Name {
+				log.Printf("Found %s/%s in %s's vcluster", tf.Namespace, tf.Name, clusterName)
 				isNameExists = true
 				break
 			}
@@ -150,8 +151,13 @@ func worker(queue *deque.Deque[tfv1beta1.Terraform]) {
 		// Cleanup fields that shouldn't exist when creating or patching resources
 		tf.SetResourceVersion("")
 		tf.SetUID("")
+		tf.SetSelfLink("")
+		tf.SetGeneration(0)
+		tf.SetManagedFields(nil)
+		tf.SetCreationTimestamp(metav1.Time{})
 		if isNameExists {
-			err := doPatch(tf, ctx, tf.Name, tf.Namespace, vclusterResourceClient)
+			// TODO Do JSONPatch which should catch the removal or changes of boolean fields that are being missed by patch
+			err := doPatch(&tf, ctx, tf.Name, tf.Namespace, vclusterTFOClient)
 			if err != nil {
 				requeue(queue, tf, fmt.Sprintf("An error occurred patching tf object: %v", err))
 				continue
@@ -160,7 +166,7 @@ func worker(queue *deque.Deque[tfv1beta1.Terraform]) {
 			continue
 		}
 
-		err = doCreate(tf, ctx, tf.Namespace, vclusterResourceClient)
+		err = doCreate(tf, ctx, tf.Namespace, vclusterTFOClient)
 		if err != nil {
 			requeue(queue, tf, fmt.Sprintf("Error creating new tf resource: %v", err))
 			continue
@@ -195,26 +201,47 @@ func convertTerraformToUnstructuredObject(terraform tfv1beta1.Terraform) (*unstr
 	return &unstructuredObject, nil
 }
 
-func doCreate(new tfv1beta1.Terraform, ctx context.Context, namespace string, client dynamic.NamespaceableResourceInterface) error {
-	unstructuredTerraform, err := convertTerraformToUnstructuredObject(new)
-	if err != nil {
-		return fmt.Errorf("an error occurred formatting tf object for saving: %v", err)
-	}
-	_, err = client.Namespace(namespace).Create(ctx, unstructuredTerraform, metav1.CreateOptions{})
+func doCreate(new tfv1beta1.Terraform, ctx context.Context, namespace string, client tfo.Interface) error {
+	_, err := client.TfV1beta1().Terraforms(namespace).Create(ctx, &new, metav1.CreateOptions{})
 	if err != nil {
 		return fmt.Errorf("an error occurred saving tf object: %v", err)
 	}
 	return nil
 }
 
-func doPatch(new any, ctx context.Context, name, namespace string, client dynamic.NamespaceableResourceInterface) error {
+func patchableTFResource(obj *tfv1beta1.Terraform) []byte {
+	gvks, _, err := scheme.Scheme.ObjectKinds(obj)
+	if err != nil || len(gvks) == 0 {
+		obj.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   tfv1beta1.SchemeGroupVersion.Group,
+			Version: tfv1beta1.SchemeGroupVersion.Version,
+			Kind:    "Terraform",
+		})
+	}
+
+	buf := bytes.NewBuffer([]byte{})
+	k8sjson.NewSerializer(k8sjson.DefaultMetaFactory, runtime.NewScheme(), runtime.NewScheme(), true).Encode(obj, buf)
+	return buf.Bytes()
+}
+
+func doPatch(new *tfv1beta1.Terraform, ctx context.Context, name, namespace string, client tfo.Interface) error {
 	// Apply new changes from awsNodeTemplate into awsNodeTemplateOld
-	inputJSON, err := json.Marshal(new)
+	log.Printf("will patch %s/%s form tf resource that has name=%s and namespace=%s", namespace, name, new.Name, new.Namespace)
+	_, err := client.TfV1beta1().Terraforms(namespace).Patch(ctx, name, types.MergePatchType, patchableTFResource(new), metav1.PatchOptions{
+		FieldManager: name,
+	})
 	if err != nil {
 		return err
 	}
-	_, err = client.Namespace(namespace).Patch(ctx, name, types.MergePatchType, inputJSON, metav1.PatchOptions{})
+	return nil
+}
+
+func doUpdate(new tfv1beta1.Terraform, ctx context.Context, namespace, name string, client tfo.Interface) error {
+	// Apply new changes from awsNodeTemplate into awsNodeTemplateOld
+	delete(new.Annotations, "kubectl.kubernetes.io/last-applied-configuration")
+	_, err := client.TfV1beta1().Terraforms(namespace).Update(ctx, &new, metav1.UpdateOptions{})
 	if err != nil {
+		log.Println(err)
 		return err
 	}
 	return nil

@@ -3,7 +3,7 @@ module github.com/galleybytes/terraform-operator-api
 go 1.19
 
 require (
-	github.com/galleybytes/terraform-operator v0.12.0
+	github.com/galleybytes/terraform-operator v0.12.1
 	github.com/gammazero/deque v0.2.1
 	github.com/gin-gonic/gin v1.8.1
 	github.com/golang-jwt/jwt/v4 v4.4.3

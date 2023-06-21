@@ -100,7 +100,9 @@ func (h APIHandler) AddCluster(c *gin.Context) {
 	_ = tenantId
 
 	jsonData := struct {
-		ClusterName string `json:"cluster_name"`
+		ClusterName      string `json:"cluster_name"`
+		ClusterManifest  []byte `json:"clusterManifest"`
+		VClusterManifest []byte `json:"vClusterManifest`
 	}{}
 	err := c.BindJSON(&jsonData)
 	if err != nil {
@@ -131,11 +133,23 @@ func (h APIHandler) AddCluster(c *gin.Context) {
 	}
 
 	// TODO expand the manifest file to be a variable to change the creation options of the vcluster
-	// applyRawManifest will create the VCluster by applying the static manifest template
-	err = h.applyRawManifest(c, kedge.KubernetesConfig(os.Getenv("KUBECONFIG")), []byte(defaultVirtualClusterManifestTemplate), namespaceName)
+	// Creates the VCluster by applying the static manifest template
+	vClusterManifest := []byte(defaultVirtualClusterManifestTemplate)
+	if len(jsonData.VClusterManifest) > 0 {
+		vClusterManifest = jsonData.VClusterManifest
+	}
+	err = h.applyRawManifest(c, kedge.KubernetesConfig(os.Getenv("KUBECONFIG")), vClusterManifest, namespaceName)
 	if err != nil {
 		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("could not create vcluster: %s", err), nil))
 		return
+	}
+
+	if len(jsonData.ClusterManifest) > 0 {
+		err = h.applyRawManifest(c, kedge.KubernetesConfig(os.Getenv("KUBECONFIG")), jsonData.ClusterManifest, namespaceName)
+		if err != nil {
+			c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("could not create cluster resources: %s", err), nil))
+			return
+		}
 	}
 
 	c.JSON(http.StatusOK, response(http.StatusOK, "", []models.Cluster{cluster}))
@@ -165,6 +179,7 @@ func (h APIHandler) createNamespace(c *gin.Context, namespaceName string) error 
 	return nil
 }
 
+// applyRawManifest will create resources by applying the static manifest template
 func (h APIHandler) applyRawManifest(c *gin.Context, config *rest.Config, raw []byte, namespace string) error {
 	tempfile, err := os.CreateTemp(util.Tmpdir(), "*manifest")
 	if err != nil {

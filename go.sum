@@ -222,6 +222,8 @@ github.com/isaaguilar/kedge v0.0.0-20230616161426-17e452296bfc h1:GXPFcjgMkJewYB
 github.com/isaaguilar/kedge v0.0.0-20230616161426-17e452296bfc/go.mod h1:uHkKWxPNzHSAvNrJ7uOrmt/e5fZ3GU7cO5zqbQKGQfk=
 github.com/isaaguilar/kedge v0.0.0-20230616234728-9511683dc2ab h1:P5KhXXXO3zSOT472f7Jtoy4pcYsv68TJeDH+LnR3wu0=
 github.com/isaaguilar/kedge v0.0.0-20230616234728-9511683dc2ab/go.mod h1:uHkKWxPNzHSAvNrJ7uOrmt/e5fZ3GU7cO5zqbQKGQfk=
+github.com/isaaguilar/kedge v0.0.0-20230623005919-25931c711d84 h1:Zz3ktQ6+9FrJQvfcG17j4pmchXJFFU/IOStDxfx+n6M=
+github.com/isaaguilar/kedge v0.0.0-20230623005919-25931c711d84/go.mod h1:uHkKWxPNzHSAvNrJ7uOrmt/e5fZ3GU7cO5zqbQKGQfk=
 github.com/jackc/chunkreader v1.0.0/go.mod h1:RT6O25fNZIuasFJRyZ4R/Y2BbhasbmZXF9QQ7T3kePo=
 github.com/jackc/chunkreader/v2 v2.0.0/go.mod h1:odVSm741yZoC3dpHEUXIqA9tQRhFrgOHwnPIn9lDKlk=
 github.com/jackc/chunkreader/v2 v2.0.1 h1:i+RDz65UE+mmpjTfyz0MoVTnzeYxroil2G82ki7MGG8=

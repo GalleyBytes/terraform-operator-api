@@ -7,7 +7,7 @@ require (
 	github.com/gammazero/deque v0.2.1
 	github.com/gin-gonic/gin v1.8.1
 	github.com/golang-jwt/jwt/v4 v4.4.3
-	github.com/isaaguilar/kedge v0.0.0-20230616234728-9511683dc2ab
+	github.com/isaaguilar/kedge v0.0.0-20230623005919-25931c711d84
 	github.com/spf13/viper v1.12.0
 	gorm.io/driver/postgres v1.3.9
 	gorm.io/gorm v1.23.8

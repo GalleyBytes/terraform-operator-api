@@ -10,6 +10,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"regexp"
 	"strconv"
 
 	"github.com/galleybytes/terraform-operator-api/pkg/common/models"
@@ -195,6 +196,24 @@ func (h APIHandler) applyRawManifest(c *gin.Context, config *rest.Config, raw []
 
 	err = kedge.Apply(config, tempfile.Name(), namespace, []string{})
 	if err != nil {
+		re := regexp.MustCompile(`namespaces.*not found`)
+		if re.Match([]byte(err.Error())) {
+			client, err := kubernetes.NewForConfig(config)
+			if err != nil {
+				return err
+			}
+			_, err = client.CoreV1().Namespaces().Create(c, &corev1.Namespace{
+				ObjectMeta: metav1.ObjectMeta{
+					Name: namespace,
+				},
+			}, metav1.CreateOptions{})
+			if err != nil {
+				if !kerrors.IsAlreadyExists(err) {
+					return err
+				}
+			}
+			return h.applyRawManifest(c, config, raw, namespace)
+		}
 		return fmt.Errorf("error applying manifest: %s", err)
 	}
 	// Should this call block until the vcluster is up and running?

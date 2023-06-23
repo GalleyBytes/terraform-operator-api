@@ -13,6 +13,7 @@ import (
 	tfv1beta1 "github.com/galleybytes/terraform-operator/pkg/apis/tf/v1beta1"
 	tfo "github.com/galleybytes/terraform-operator/pkg/client/clientset/versioned"
 	"github.com/gammazero/deque"
+	corev1 "k8s.io/api/core/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -96,8 +97,8 @@ func worker(queue *deque.Deque[tfv1beta1.Terraform]) {
 		}
 
 		// With the clusterName, check out the vcluster config
-		namespace := tenantId + "-" + clusterName
-		secret, err := k8sclient.CoreV1().Secrets(namespace).Get(ctx, "vc-tfo-virtual-cluster", metav1.GetOptions{})
+		vclusterNamespace := tenantId + "-" + clusterName
+		secret, err := k8sclient.CoreV1().Secrets(vclusterNamespace).Get(ctx, "vc-tfo-virtual-cluster", metav1.GetOptions{})
 		if err != nil {
 			if kerrors.IsNotFound(err) {
 				requeue(queue, tf, fmt.Sprintln("An error occurred getting vcluster config"))
@@ -128,10 +129,24 @@ func worker(queue *deque.Deque[tfv1beta1.Terraform]) {
 		// To do so we set the config to insecure and we remove the CAData. We have to leave
 		// CertData and CertFile which are used as authorization to the vcluster.
 		vclusterConfig := kubernetesConfig(kubeConfigFilename.Name())
-		vclusterConfig.Host = fmt.Sprintf("tfo-virtual-cluster.%s.svc", namespace)
+		vclusterConfig.Host = fmt.Sprintf("tfo-virtual-cluster.%s.svc", vclusterNamespace)
 		vclusterConfig.Insecure = true
 		vclusterConfig.TLSClientConfig.CAData = nil
+		vclusterClient := kubernetes.NewForConfigOrDie(vclusterConfig)
 		vclusterTFOClient := tfo.NewForConfigOrDie(vclusterConfig)
+
+		// Try and create the namespace for the tfResource. Acceptable error is if namespace already exists.
+		_, err = vclusterClient.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: tf.Namespace,
+			},
+		}, metav1.CreateOptions{})
+		if err != nil {
+			if !kerrors.IsAlreadyExists(err) {
+				requeue(queue, tf, fmt.Sprintf("The namespace '%s' could not be created in vcluster: %s", tf.Namespace, err))
+				return
+			}
+		}
 
 		// Get a list of resources in the vcluster to see if the resource already exists to determines whether to patch or create.
 		terraforms, err := vclusterTFOClient.TfV1beta1().Terraforms(tf.Namespace).List(ctx, metav1.ListOptions{})

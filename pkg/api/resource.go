@@ -256,7 +256,7 @@ func (h APIHandler) ResourcePoll(c *gin.Context) {
 		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
 		return
 	}
-	if tf.Status.Stage.Generation != tf.Generation || tf.Status.Stage.Reason != "COMPLETED_APPLY" {
+	if tf.Status.Stage.Generation != tf.Generation || !regexp.MustCompile(`COMPLETED.*APPLY`).MatchString(tf.Status.Stage.Reason) {
 		c.JSON(http.StatusOK, response(http.StatusOK, fmt.Sprintf("The '%s' workflow has not completed.", tf.Name), nil))
 		return
 	}

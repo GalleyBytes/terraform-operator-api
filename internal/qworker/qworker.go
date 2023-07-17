@@ -75,25 +75,21 @@ func worker(queue *deque.Deque[tfv1beta1.Terraform]) {
 			continue
 		}
 
-		// Get this cluster's tf resources to check if we accidentally queued it up
-		resourceClient := dynamicClient.Resource(terraformResource)
-		unstructedTerraformList, err := resourceClient.List(ctx, metav1.ListOptions{})
-		if err != nil {
-			requeue(queue, tf, fmt.Sprintf("An error occurred listing tf objects: %s", err))
-			continue
-		}
-		terraformList := convertTo[tfv1beta1.TerraformList](unstructedTerraformList)
-		isUUIDBelongToThisCluster := false
-		for _, terraform := range terraformList.Items {
-			if terraform.UID == tf.UID {
-				isUUIDBelongToThisCluster = true
-				break
+		// Get the host cluster's tf resources to check if we accidentally queued it up
+		if unstructedTerraformList, err := dynamicClient.Resource(terraformResource).List(ctx, metav1.ListOptions{}); err == nil {
+			terraformList := convertTo[tfv1beta1.TerraformList](unstructedTerraformList)
+			isUUIDBelongToThisCluster := false
+			for _, terraform := range terraformList.Items {
+				if terraform.UID == tf.UID {
+					isUUIDBelongToThisCluster = true
+					break
+				}
 			}
-		}
-		if isUUIDBelongToThisCluster {
-			// The UUID matches another UUID which only happens for resources creatd for this cluster
-			log.Println("This resource is not managed by the API")
-			continue
+			if isUUIDBelongToThisCluster {
+				// The UUID matches another UUID which only happens for resources creatd for this cluster
+				log.Println("This resource is not managed by the API")
+				continue
+			}
 		}
 
 		// With the clusterName, check out the vcluster config

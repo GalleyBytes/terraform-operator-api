@@ -229,6 +229,68 @@ func (h APIHandler) getClusterID(clusterName string) uint {
 	return clusters[0].ID
 }
 
+func (h APIHandler) VClusterHealth(c *gin.Context) {
+	clusterName := c.Param("cluster_name")
+	clusterID := h.getClusterID(clusterName)
+	if clusterID == 0 {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("cluster_name '%s' not found", clusterName), nil))
+		return
+	}
+	config, err := getVclusterConfig(h.clientset, "internal", clusterName)
+	if err != nil {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
+		return
+	}
+	clientset := kubernetes.NewForConfigOrDie(config)
+	n, err := clientset.CoreV1().Namespaces().List(c, metav1.ListOptions{})
+	if err != nil {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
+		return
+	}
+	if len(n.Items) == 0 {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, "No namespaces available", nil))
+		return
+	}
+	c.JSON(http.StatusNoContent, nil)
+}
+
+func (h APIHandler) VClusterTFOHealth(c *gin.Context) {
+	clusterName := c.Param("cluster_name")
+	clusterID := h.getClusterID(clusterName)
+	if clusterID == 0 {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("cluster_name '%s' not found", clusterName), nil))
+		return
+	}
+	config, err := getVclusterConfig(h.clientset, "internal", clusterName)
+	if err != nil {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
+		return
+	}
+	tfoclientset := tfo.NewForConfigOrDie(config)
+	if _, err = tfoclientset.TfV1beta1().Terraforms("").List(c, metav1.ListOptions{}); err != nil {
+		// tfo client cannot query crds and therefore tfo health is not ready
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
+		return
+	}
+
+	// Following checks if tfo is running. TFO must be installed similar to the bundled packages in the
+	// terraform-operator github repo.
+	clientset := kubernetes.NewForConfigOrDie(config)
+	n, err := clientset.CoreV1().Pods("tf-system").List(c, metav1.ListOptions{
+		LabelSelector: "app=terraform-operator,component=controller",
+		FieldSelector: "status.phase=Running",
+	})
+	if err != nil {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
+		return
+	}
+	if len(n.Items) == 0 {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, "Terraform operator controller is not running", nil))
+		return
+	}
+	c.JSON(http.StatusNoContent, nil)
+}
+
 // ResourcePoll is a short poll that checks and returns resources created from the tf resource's workflow
 // that have the correct label and annotation value.
 func (h APIHandler) ResourcePoll(c *gin.Context) {

@@ -1,6 +1,8 @@
 package main
 
 import (
+	"flag"
+	"io"
 	"log"
 	"os"
 
@@ -13,9 +15,16 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/klog/v2"
 )
 
 func main() {
+	klog.InitFlags(flag.CommandLine)
+	flag.Parse()
+	flag.Set("logtostderr", "false")
+	flag.Set("alsologtostderr", "false")
+	klog.SetOutput(io.Discard)
+
 	viper.SetConfigFile("./pkg/common/envs/.env")
 	viper.ReadInConfig()
 	viper.AutomaticEnv()

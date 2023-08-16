@@ -187,7 +187,7 @@ func (h APIHandler) applyRawManifest(c *gin.Context, config *rest.Config, raw []
 		return err
 	}
 	defer os.Remove(tempfile.Name())
-	fmt.Println("Created file", tempfile.Name())
+	// fmt.Println("Created file", tempfile.Name())
 
 	err = os.WriteFile(tempfile.Name(), raw, 0755)
 	if err != nil {

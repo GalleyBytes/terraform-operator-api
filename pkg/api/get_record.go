@@ -631,16 +631,14 @@ func (h APIHandler) ResourceLogWatcher(c *gin.Context) {
 }
 
 // Check if terraform namespace/name resource exists in vcluster
-func isResourceExist(parentClientset kubernetes.Interface, clusterName, namespace, name string, c *gin.Context) bool {
+func getResource(parentClientset kubernetes.Interface, clusterName, namespace, name string, c *gin.Context) (*tfv1beta1.Terraform, error) {
 	config, err := getVclusterConfig(parentClientset, "internal", clusterName)
 	if err != nil {
-		return false
+		return nil, err
 	}
 	tfoclientset := tfo.NewForConfigOrDie(config)
-	if _, err := tfoclientset.TfV1beta1().Terraforms(namespace).Get(c, name, metav1.GetOptions{}); err != nil {
-		return false
-	}
-	return true
+	return tfoclientset.TfV1beta1().Terraforms(namespace).Get(c, name, metav1.GetOptions{})
+
 }
 
 func (h APIHandler) Debugger(c *gin.Context) {
@@ -652,7 +650,7 @@ func (h APIHandler) Debugger(c *gin.Context) {
 	}
 	name := c.Param("name")
 	namespace := c.Param("namespace")
-	if !isResourceExist(h.clientset, clusterName, namespace, name, c) {
+	if _, err := getResource(h.clientset, clusterName, namespace, name, c); err != nil {
 		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("tf resource '%s/%s' not found", namespace, name), nil))
 		return
 	}

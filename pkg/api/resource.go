@@ -291,6 +291,46 @@ func (h APIHandler) VClusterTFOHealth(c *gin.Context) {
 	c.JSON(http.StatusNoContent, nil)
 }
 
+func (h APIHandler) ResourceStatusCheck(c *gin.Context) {
+	clusterName := c.Param("cluster_name")
+	clusterID := h.getClusterID(clusterName)
+	if clusterID == 0 {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("cluster_name '%s' not found", clusterName), nil))
+		return
+	}
+
+	name := c.Param("name")
+	namespace := c.Param("namespace")
+
+	resource, err := getResource(h.clientset, clusterName, namespace, name, c)
+	if err != nil {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("tf resource '%s/%s' not found", namespace, name), nil))
+		return
+	}
+
+	didStart := resource.Generation == resource.Status.Stage.Generation
+	didComplete := resource.Status.Phase == tfv1beta1.PhaseCompleted
+	currentState := resource.Status.Stage.State
+	currentTask := resource.Status.Stage.TaskType
+
+	responseJSONData := []struct {
+		DidStart     bool   `json:"did_start"`
+		DidComplete  bool   `json:"did_complete"`
+		CurrentState string `json:"current_state"`
+		CurrentTask  string `json:"current_task"`
+	}{
+		{
+			DidStart:     didStart,
+			DidComplete:  didComplete,
+			CurrentState: string(currentState),
+			CurrentTask:  currentTask.String(),
+		},
+	}
+
+	c.JSON(http.StatusOK, response(http.StatusOK, "", responseJSONData))
+
+}
+
 // ResourcePoll is a short poll that checks and returns resources created from the tf resource's workflow
 // that have the correct label and annotation value.
 func (h APIHandler) ResourcePoll(c *gin.Context) {

@@ -42,6 +42,7 @@ func (h APIHandler) RegisterRoutes() {
 	cluster.GET("/:cluster_name/resource/:namespace/:name/poll", h.ResourcePoll) // Poll for resource objects in the cluster
 	cluster.DELETE("/:cluster_name/event/:tfo_resource_uuid", h.ResourceEvent)
 	cluster.GET("/:cluster_name/debug/:namespace/:name", h.Debugger)
+	cluster.GET("/:cluster_name/status/:namespace/:name", h.ResourceStatusCheck)
 
 	// DEPRECATED usage of clusterid is being removed. todo ensure galleybytes projects aren't using this
 	clusterid := routes.Group("/cluster-id")

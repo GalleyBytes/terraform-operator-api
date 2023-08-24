@@ -308,11 +308,6 @@ func (h APIHandler) ResourceStatusCheck(c *gin.Context) {
 		return
 	}
 
-	didStart := resource.Generation == resource.Status.Stage.Generation
-	didComplete := resource.Status.Phase == tfv1beta1.PhaseCompleted
-	currentState := resource.Status.Stage.State
-	currentTask := resource.Status.Stage.TaskType
-
 	responseJSONData := []struct {
 		DidStart     bool   `json:"did_start"`
 		DidComplete  bool   `json:"did_complete"`
@@ -320,15 +315,32 @@ func (h APIHandler) ResourceStatusCheck(c *gin.Context) {
 		CurrentTask  string `json:"current_task"`
 	}{
 		{
-			DidStart:     didStart,
-			DidComplete:  didComplete,
-			CurrentState: string(currentState),
-			CurrentTask:  currentTask.String(),
+			DidStart:     resource.Generation == resource.Status.Stage.Generation,
+			DidComplete:  !IsWorkflowRunning(resource.Status),
+			CurrentState: string(resource.Status.Stage.State),
+			CurrentTask:  resource.Status.Stage.TaskType.String(),
 		},
 	}
 
 	c.JSON(http.StatusOK, response(http.StatusOK, "", responseJSONData))
 
+}
+
+// Take into account pod phases as well as task state to determine if the workflow is still running.
+func IsWorkflowRunning(status tfv1beta1.TerraformStatus) bool {
+	switch status.Stage.State {
+	case tfv1beta1.StateFailed, tfv1beta1.StageState(corev1.PodFailed):
+		// Failed states trump all, the workflow is not running after a failure
+		return false
+	case tfv1beta1.StageState(corev1.PodRunning), tfv1beta1.StageState(corev1.PodPending):
+		// When the pod is claimed to be running, the workflow is still running
+		return true
+	default:
+		if status.Phase != tfv1beta1.PhaseCompleted {
+			return true
+		}
+		return false
+	}
 }
 
 // ResourcePoll is a short poll that checks and returns resources created from the tf resource's workflow

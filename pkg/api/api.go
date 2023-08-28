@@ -1,6 +1,9 @@
 package api
 
 import (
+	"crypto/x509"
+	"fmt"
+
 	tfv1beta1 "github.com/galleybytes/terraform-operator/pkg/apis/tf/v1beta1"
 	"github.com/gammazero/deque"
 	"github.com/gin-gonic/gin"
@@ -13,20 +16,59 @@ type APIHandler struct {
 	DB        *gorm.DB
 	Queue     *deque.Deque[tfv1beta1.Terraform]
 	clientset kubernetes.Interface
+	ssoConfig *SSOConfig
+	tenant    string
 }
 
-func NewAPIHandler(db *gorm.DB, queue *deque.Deque[tfv1beta1.Terraform], clientset kubernetes.Interface) *APIHandler {
+type SSOConfig struct {
+	URL  string
+	saml *SAMLOptions
+}
+
+type SAMLOptions struct {
+	issuer    string
+	crt       *x509.Certificate
+	recipient string
+}
+
+func NewSAMLConfig(issuer, recipient, metadataURL string) (*SSOConfig, error) {
+	if issuer == "" || recipient == "" || metadataURL == "" {
+		return nil, nil
+	}
+
+	crt, err := fetchIDPCertificate(metadataURL)
+	if err != nil {
+		return nil, err
+	}
+	if crt == nil {
+		return nil, fmt.Errorf("could not get certification from metadata url")
+	}
+	return &SSOConfig{
+		saml: &SAMLOptions{
+			issuer:    issuer,
+			recipient: recipient,
+			crt:       crt,
+		},
+	}, nil
+}
+
+func NewAPIHandler(db *gorm.DB, queue *deque.Deque[tfv1beta1.Terraform], clientset kubernetes.Interface, ssoConfig *SSOConfig) *APIHandler {
+
 	return &APIHandler{
 		Server:    gin.Default(),
 		DB:        db,
 		Queue:     queue,
 		clientset: clientset,
+		ssoConfig: ssoConfig,
 	}
 }
 
 func (h APIHandler) RegisterRoutes() {
-	login := h.Server.Group("/")
-	login.POST("/login", h.login)
+	auth := h.Server.Group("/")
+	auth.POST("/login", h.login)
+	auth.GET("/connect", h.defaultConnectMethod) // Determine preferred auth method
+	auth.GET("/sso", h.ssoRedirecter)
+	auth.POST("/sso/saml", h.samlConnecter)
 
 	routes := h.Server.Group("/api/v1/")
 	routes.Use(validateJwt)
@@ -41,8 +83,10 @@ func (h APIHandler) RegisterRoutes() {
 	cluster.PUT("/:cluster_name/event", h.ResourceEvent)
 	cluster.GET("/:cluster_name/resource/:namespace/:name/poll", h.ResourcePoll) // Poll for resource objects in the cluster
 	cluster.DELETE("/:cluster_name/event/:tfo_resource_uuid", h.ResourceEvent)
-	cluster.GET("/:cluster_name/debug/:namespace/:name", h.Debugger)
-	cluster.GET("/:cluster_name/status/:namespace/:name", h.ResourceStatusCheck)
+	cluster.GET("/:cluster_name/resource/:namespace/:name/debug", h.Debugger)
+	cluster.GET("/:cluster_name/debug/:namespace/:name", h.Debugger) // Alias
+	cluster.GET("/:cluster_name/resource/:namespace/:name/status", h.ResourceStatusCheck)
+	cluster.GET("/:cluster_name/status/:namespace/:name", h.ResourceStatusCheck) // Alias
 
 	// DEPRECATED usage of clusterid is being removed. todo ensure galleybytes projects aren't using this
 	clusterid := routes.Group("/cluster-id")

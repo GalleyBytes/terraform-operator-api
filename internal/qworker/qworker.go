@@ -22,7 +22,6 @@ import (
 	k8sjson "k8s.io/apimachinery/pkg/runtime/serializer/json"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/uuid"
-	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -55,7 +54,6 @@ func worker(queue *deque.Deque[tfv1beta1.Terraform]) {
 	ctx := context.TODO()
 	kubeconfig := os.Getenv("KUBECONFIG")
 	config := kubernetesConfig(kubeconfig)
-	dynamicClient := dynamic.NewForConfigOrDie(config)
 	k8sclient := kubernetes.NewForConfigOrDie(config)
 
 	for {
@@ -73,23 +71,6 @@ func worker(queue *deque.Deque[tfv1beta1.Terraform]) {
 			// The terraform resource requires a cluster name in order to continue
 			log.Println("The desired resource is missing a cluster-name identifier. Will not create resource")
 			continue
-		}
-
-		// Get the host cluster's tf resources to check if we accidentally queued it up
-		if unstructedTerraformList, err := dynamicClient.Resource(terraformResource).List(ctx, metav1.ListOptions{}); err == nil {
-			terraformList := convertTo[tfv1beta1.TerraformList](unstructedTerraformList)
-			isUUIDBelongToThisCluster := false
-			for _, terraform := range terraformList.Items {
-				if terraform.UID == tf.UID {
-					isUUIDBelongToThisCluster = true
-					break
-				}
-			}
-			if isUUIDBelongToThisCluster {
-				// The UUID matches another UUID which only happens for resources creatd for this cluster
-				log.Println("This resource is not managed by the API")
-				continue
-			}
 		}
 
 		// With the clusterName, check out the vcluster config

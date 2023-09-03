@@ -3,6 +3,7 @@ package api
 import (
 	"crypto/x509"
 	"fmt"
+	"net/http"
 
 	tfv1beta1 "github.com/galleybytes/terraform-operator/pkg/apis/tf/v1beta1"
 	"github.com/gammazero/deque"
@@ -70,6 +71,20 @@ func (h APIHandler) RegisterRoutes() {
 	auth.GET("/sso", h.ssoRedirecter)
 	auth.POST("/sso/saml", h.samlConnecter)
 
+	empty := h.Server.Group("/")
+	empty.GET("/placeholder", func(c *gin.Context) {
+		c.JSON(200, response(200, "", []string{"Please come again!"}))
+	})
+	empty.POST("/placeholder", func(c *gin.Context) {
+		var data any
+		err := c.BindJSON(&data)
+		if err != nil {
+			c.AbortWithError(http.StatusNotAcceptable, err)
+			return
+		}
+		c.JSON(200, response(200, "", []any{data}))
+	})
+
 	routes := h.Server.Group("/api/v1/")
 	routes.Use(validateJwt)
 	routes.GET("/", h.Index)
@@ -101,18 +116,17 @@ func (h APIHandler) RegisterRoutes() {
 	routes.GET("/resource/:tfo_resource_uuid/generations", h.GetDistinctGeneration)
 	// ReourceSpec
 	routes.GET("/resource/:tfo_resource_uuid/resource-spec/generation/:generation", h.GetResourceSpec)
-	// // Poll for resource objects in the cluster
-	// routes.GET("/resource/:tfo_resource_uuid/poll", h.ResourcePoll)
-	// Logs
-	routes.POST("/logs", h.AddTFOTaskLogs) // requires access to fs of logs
+
 	routes.GET("/resource/:tfo_resource_uuid/logs", h.GetClustersResourcesLogs)
 	routes.GET("/resource/:tfo_resource_uuid/logs/generation/:generation", h.GetClustersResourcesLogs)
 	routes.GET("/resource/:tfo_resource_uuid/logs/generation/:generation/task/:task_type", h.GetClustersResourcesLogs)
 	routes.GET("/resource/:tfo_resource_uuid/logs/generation/:generation/task/:task_type/rerun/:rerun", h.GetClustersResourcesLogs)
 	routes.GET("/task/:task_pod_uuid/logs", h.GetTFOTaskLogsViaTask)
+
 	// Tasks
-	routes.POST("/task", h.AddTaskPod) // requires access to fs of logs
-	routes.GET("/task/:task_pod_uuid", h.GetTaskPod)
+	routes.POST("/task", h.AddTaskPod)
+	routes.GET("/task/:task_pod_uuid", h.GetTaskPod) // TODO Should getting a task out of band (ie not with cluster info) be allowed?
+
 	// Approval
 	routes.GET("/resource/:tfo_resource_uuid/approval-status", h.GetApprovalStatus)
 	routes.GET("/task/:task_pod_uuid/approval-status", h.GetApprovalStatusViaTaskPodUUID)

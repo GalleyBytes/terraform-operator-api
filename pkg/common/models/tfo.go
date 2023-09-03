@@ -8,12 +8,10 @@ import (
 
 type TFOTaskLog struct {
 	gorm.Model
-	TaskPod         TaskPod     `json:"task_pod,omitempty"`
-	TaskPodUUID     string      `json:"task_pod_uuid"`
-	TFOResource     TFOResource `json:"tfo_resource,omitempty"`
-	TFOResourceUUID string      `json:"tfo_resource_uuid"`
-	Message         string      `json:"message"`
-	LineNo          string      `json:"line_no"`
+	TaskPod     TaskPod `json:"task_pod,omitempty"`
+	TaskPodUUID string  `json:"task_pod_uuid"`
+	Message     string  `json:"message" gorm:"type:varchar(1048576)"`
+	Size        uint64  `json:"size"`
 }
 
 type TFOResource struct {

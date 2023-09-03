@@ -275,7 +275,7 @@ func (h APIHandler) ResourceLogs(generationFilter, rerunFilter, taskTypeFilter, 
 		taskPodUUIDs = append(taskPodUUIDs, t.UUID)
 	}
 	var tfoTaskLogs []models.TFOTaskLog
-	if result := h.DB.Where("tfo_resource_uuid = ? AND task_pod_uuid IN ?", &uuid, taskPodUUIDs).Find(&tfoTaskLogs); result.Error != nil {
+	if result := h.DB.Where("task_pod_uuid IN ?", taskPodUUIDs).Find(&tfoTaskLogs); result.Error != nil {
 		return logs, result.Error
 	}
 
@@ -284,13 +284,12 @@ func (h APIHandler) ResourceLogs(generationFilter, rerunFilter, taskTypeFilter, 
 	for _, taskPod := range taskPodsOfHighestRerun {
 		for _, log := range tfoTaskLogs {
 			if log.TaskPodUUID == taskPod.UUID {
+				// TODO does the size need to be sent?
 				logs = append(logs, ResourceLog{
-					ID:              log.ID,
-					LogMessage:      log.Message,
-					LineNo:          log.LineNo,
-					Rerun:           taskPod.Rerun,
-					TaskType:        taskPod.TaskType,
-					TFOResourceUUID: log.TFOResourceUUID,
+					ID:         log.ID,
+					LogMessage: log.Message,
+					Rerun:      taskPod.Rerun,
+					TaskType:   taskPod.TaskType,
 				})
 			}
 		}

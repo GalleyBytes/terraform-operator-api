@@ -14,6 +14,7 @@ import (
 	"github.com/gammazero/deque"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
+	"gorm.io/gorm"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -22,7 +23,7 @@ import (
 
 var (
 	port            string
-	dbUrl           string
+	dbURL           string
 	ssoLoginURL     string
 	samlIssuer      string
 	samlRecipient   string
@@ -42,7 +43,7 @@ func main() {
 	pflag.CommandLine.Set("logtostderr", "true")
 	pflag.StringVar(&port, "port", "", "Port to expose the API on")
 	viper.BindPFlag("port", pflag.Lookup("port"))
-	pflag.StringVar(&dbUrl, "db-url", "", "Database url format (Example: 'postgres://user:password@srv:5432/db')")
+	pflag.StringVar(&dbURL, "db-url", "", "Database url format (Example: 'postgres://user:password@srv:5432/db')")
 	viper.BindPFlag("db-url", pflag.Lookup("db-url"))
 	pflag.StringVar(&ssoLoginURL, "sso-login-url", "", "IDP Login URL ")
 	viper.BindPFlag("sso-login-url", pflag.Lookup("sso-login-url"))
@@ -64,14 +65,18 @@ func main() {
 	klog.Warning("Don't show this warning")
 
 	port = viper.GetString("port")
-	dbUrl = viper.GetString("db-url")
+	dbURL = viper.GetString("db-url")
 	ssoLoginURL = viper.GetString("sso-login-url")
 	samlIssuer = viper.GetString("saml-issuer")
 	samlRecipient = viper.GetString("saml-recipient")
 	samlMetadataURL = viper.GetString("saml-metadata-url")
 
 	clientset := kubernetes.NewForConfigOrDie(NewConfigOrDie(os.Getenv("KUBECONFIG")))
-	database := db.Init(dbUrl)
+	var database *gorm.DB
+	if dbURL != "" {
+		database = db.Init(dbURL)
+	}
+
 	queue := deque.Deque[tfv1beta1.Terraform]{}
 
 	qworker.BackgroundWorker(&queue)

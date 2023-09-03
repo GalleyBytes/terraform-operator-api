@@ -643,7 +643,8 @@ func (h APIHandler) addResource(c *gin.Context) error {
 		return fmt.Errorf("error saving tfo_resource_spec: %s", result.Error)
 	}
 
-	h.appendClusterNameLabel(&jsonData.Terraform, cluster.Name)
+	appendClusterNameLabel(&jsonData.Terraform, cluster.Name)
+	addOriginEnvs(&jsonData.Terraform)
 	// TODO Allow using a different queue
 	h.Queue.PushBack(jsonData.Terraform)
 
@@ -716,7 +717,8 @@ func (h APIHandler) updateResource(c *gin.Context) error {
 		return fmt.Errorf("error occurred when looking for tfo_resource_spec: %v", result.Error)
 	}
 
-	h.appendClusterNameLabel(&jsonData.Terraform, cluster.Name)
+	appendClusterNameLabel(&jsonData.Terraform, cluster.Name)
+	addOriginEnvs(&jsonData.Terraform)
 	// TODO Allow using a different queue
 	h.Queue.PushBack(jsonData.Terraform)
 
@@ -725,7 +727,7 @@ func (h APIHandler) updateResource(c *gin.Context) error {
 
 // appendClusterNameLabel will hack the cluster name to the resource's labels.
 // This make it easier to identify the origin of the resource in a remote cluster.
-func (h APIHandler) appendClusterNameLabel(tf *tfv1beta1.Terraform, clusterName string) {
+func appendClusterNameLabel(tf *tfv1beta1.Terraform, clusterName string) {
 	if clusterName == "" {
 		return
 	}
@@ -733,6 +735,23 @@ func (h APIHandler) appendClusterNameLabel(tf *tfv1beta1.Terraform, clusterName 
 		tf.Labels = map[string]string{}
 	}
 	tf.Labels["tfo-api.galleybytes.com/cluster-name"] = clusterName
+}
+
+// addOriginEnvs will inject TFO_ORIGIN envs to the incoming resource
+func addOriginEnvs(tf *tfv1beta1.Terraform) {
+	tf.Spec.TaskOptions = append(tf.Spec.TaskOptions, tfv1beta1.TaskOption{
+		For: []tfv1beta1.TaskName{"*"},
+		Env: []corev1.EnvVar{
+			{
+				Name:  "TFO_ORIGIN_UUID",
+				Value: string(tf.UID),
+			},
+			{
+				Name:  "TFO_ORIGIN_GENERATION",
+				Value: fmt.Sprintf("%d", tf.Generation),
+			},
+		},
+	})
 }
 
 func compare(s1, op, s2 string) bool {

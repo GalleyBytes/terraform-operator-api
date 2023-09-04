@@ -360,6 +360,13 @@ func (h APIHandler) LastTaskLog(c *gin.Context) {
 
 	clientset := kubernetes.NewForConfigOrDie(config)
 
+	// check if namespace exists before querying for pods by label
+	_, err = clientset.CoreV1().Namespaces().Get(context.Background(), namespace, metav1.GetOptions{})
+	if err != nil {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
+		return
+	}
+
 	// get the pods with a certain label in the default namespace
 	labelSelector := "terraforms.tf.galleybytes.com/resourceName=" + resourceName // change this to your label selector
 	pods, err := clientset.CoreV1().Pods(namespace).List(context.Background(), metav1.ListOptions{LabelSelector: labelSelector})

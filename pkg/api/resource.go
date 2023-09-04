@@ -364,13 +364,13 @@ func (h APIHandler) LastTaskLog(c *gin.Context) {
 	labelSelector := "terraforms.tf.galleybytes.com/resourceName=" + resourceName // change this to your label selector
 	pods, err := clientset.CoreV1().Pods(namespace).List(context.Background(), metav1.ListOptions{LabelSelector: labelSelector})
 	if err != nil {
-		c.JSON(http.StatusBadRequest, response(http.StatusBadRequest, err.Error(), nil))
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
 		return
 	}
 
 	// check if pods were found with matching labels
 	if len(pods.Items) == 0 {
-		c.JSON(http.StatusUnprocessableEntity, response(http.StatusNotFound, fmt.Sprintf("terraform pods not found on cluster '%s' for tf resource '%s'/%s'", clusterName, namespace, resourceName), nil))
+		c.JSON(http.StatusNotFound, response(http.StatusNotFound, fmt.Sprintf("terraform pods not found on cluster '%s' for tf resource '%s/%s'", clusterName, namespace, resourceName), nil))
 		return
 	}
 
@@ -389,7 +389,7 @@ func (h APIHandler) LastTaskLog(c *gin.Context) {
 
 	pod, err := clientset.CoreV1().Pods(namespace).Get(context.Background(), newestPod, metav1.GetOptions{})
 	if err != nil {
-		c.JSON(http.StatusNotFound, response(http.StatusNotFound, err.Error(), nil))
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
 		return
 	}
 
@@ -406,7 +406,7 @@ func (h APIHandler) LastTaskLog(c *gin.Context) {
 	// get the logs of the newest pod
 	logs, err := clientset.CoreV1().Pods(namespace).GetLogs(newestPod, &corev1.PodLogOptions{}).DoRaw(context.Background())
 	if err != nil {
-		c.JSON(http.StatusNotFound, response(http.StatusNotFound, err.Error(), nil))
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
 		return
 	}
 

@@ -644,7 +644,7 @@ func (h APIHandler) addResource(c *gin.Context) error {
 	}
 
 	appendClusterNameLabel(&jsonData.Terraform, cluster.Name)
-	addOriginEnvs(&jsonData.Terraform)
+	addOriginEnvs(&jsonData.Terraform, h.tenant, clusterName)
 	// TODO Allow using a different queue
 	h.Queue.PushBack(jsonData.Terraform)
 
@@ -718,7 +718,7 @@ func (h APIHandler) updateResource(c *gin.Context) error {
 	}
 
 	appendClusterNameLabel(&jsonData.Terraform, cluster.Name)
-	addOriginEnvs(&jsonData.Terraform)
+	addOriginEnvs(&jsonData.Terraform, h.tenant, clusterName)
 	// TODO Allow using a different queue
 	h.Queue.PushBack(jsonData.Terraform)
 
@@ -738,17 +738,27 @@ func appendClusterNameLabel(tf *tfv1beta1.Terraform, clusterName string) {
 }
 
 // addOriginEnvs will inject TFO_ORIGIN envs to the incoming resource
-func addOriginEnvs(tf *tfv1beta1.Terraform) {
+func addOriginEnvs(tf *tfv1beta1.Terraform, tenant, clusterName string) {
+	generation := fmt.Sprintf("%d", tf.Generation)
+	resourceUUID := string(tf.UID)
+	token, err := generateTaskJWT(resourceUUID, tenant, clusterName, generation)
+	if err != nil {
+		log.Printf("Failed to generate taskJWT: %s", err)
+	}
 	tf.Spec.TaskOptions = append(tf.Spec.TaskOptions, tfv1beta1.TaskOption{
 		For: []tfv1beta1.TaskName{"*"},
 		Env: []corev1.EnvVar{
 			{
 				Name:  "TFO_ORIGIN_UUID",
-				Value: string(tf.UID),
+				Value: resourceUUID,
 			},
 			{
 				Name:  "TFO_ORIGIN_GENERATION",
-				Value: fmt.Sprintf("%d", tf.Generation),
+				Value: generation,
+			},
+			{
+				Name:  "TFO_API_LOG_TOKEN",
+				Value: token,
 			},
 		},
 	})

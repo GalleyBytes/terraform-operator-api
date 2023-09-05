@@ -205,3 +205,85 @@ func fetchIDPCertificate(metadataURL string) (*x509.Certificate, error) {
 	return x509.ParseCertificate(b)
 
 }
+
+// TODO generateLogJWT is a temporary function to provide access to some task endpoints. Hopefully this
+// can be removed for a better method soon.
+//
+// Grant 30 days of access per issued token.
+func generateTaskJWT(resourceUUID, tenant, clientName, generation string) (string, error) {
+	token := jwt.New(jwt.SigningMethodHS256)
+	claims := token.Claims.(jwt.MapClaims)
+
+	claims["exp"] = time.Now().Add(time.Hour * 720).Unix()
+	claims["authorized"] = true
+	claims["resourceUUID"] = resourceUUID
+	claims["generation"] = generation
+
+	tokenString, err := token.SignedString([]byte(jwtSigningKey))
+
+	if err != nil {
+		return "", fmt.Errorf("something went wrong: %s", err.Error())
+	}
+	return tokenString, nil
+}
+
+// Check that the  taskJWT is correctly formatted with all the claim fields defined
+func validateTaskJWT(c *gin.Context) {
+
+	if c.Request.Header["Token"] == nil {
+		unauthorized(c, "token not in header")
+		return
+	}
+
+	token, err := jwt.Parse(c.Request.Header["Token"][0], func(t *jwt.Token) (interface{}, error) {
+		if _, ok := t.Method.(*jwt.SigningMethodHMAC); !ok {
+			return nil, fmt.Errorf("there was an error in parsing")
+		}
+
+		// Validate that the claims have all the required fields
+		claims := t.Claims.(jwt.MapClaims)
+		if _, ok := claims["resourceUUID"]; !ok {
+			return nil, fmt.Errorf("invalid claim")
+		}
+		if _, ok := claims["generation"]; !ok {
+			return nil, fmt.Errorf("invalid claim")
+		}
+
+		return []byte(jwtSigningKey), nil
+	})
+
+	if err != nil {
+		unauthorized(c, err.Error())
+		return
+	}
+
+	if token == nil {
+		unauthorized(c, "invalid token")
+		return
+	}
+}
+
+func taskJWT(tokenHeader string) (*jwt.Token, error) {
+	return jwt.Parse(tokenHeader, func(t *jwt.Token) (interface{}, error) {
+		return []byte(jwtSigningKey), nil
+	})
+}
+
+// Return the claims from the taskJWT in a easy to consume map ie. no interface
+func taskJWTClaims(token *jwt.Token) map[string]string {
+	claimsMap := map[string]string{}
+
+	claims := token.Claims.(jwt.MapClaims)
+	for key, value := range claims {
+		switch c := value.(type) {
+		case string:
+			claimsMap[key] = c
+		case time.Time:
+			claimsMap[key] = c.String()
+		default:
+			continue
+		}
+	}
+
+	return claimsMap
+}

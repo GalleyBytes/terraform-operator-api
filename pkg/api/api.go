@@ -87,6 +87,7 @@ func (h APIHandler) RegisterRoutes() {
 	cluster.GET("/:cluster_name/debug/:namespace/:name", h.Debugger) // Alias
 	cluster.GET("/:cluster_name/resource/:namespace/:name/status", h.ResourceStatusCheck)
 	cluster.GET("/:cluster_name/status/:namespace/:name", h.ResourceStatusCheck) // Alias
+	cluster.GET("/:cluster_name/resource/:namespace/:name/last-task-log", h.LastTaskLog)
 
 	// DEPRECATED usage of clusterid is being removed. todo ensure galleybytes projects aren't using this
 	clusterid := routes.Group("/cluster-id")

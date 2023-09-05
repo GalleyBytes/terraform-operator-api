@@ -11,7 +11,9 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"sort"
 	"strconv"
+	"time"
 
 	"github.com/galleybytes/terraform-operator-api/pkg/common/models"
 	"github.com/galleybytes/terraform-operator-api/pkg/util"
@@ -42,6 +44,14 @@ type resource struct {
 	// TFOResourceSpec models.TFOResourceSpec `json:"tfo_resource_spec"`
 	// TFOResource     models.TFOResource     `json:"tfo_resource"`
 }
+
+type PodInfo struct {
+	Name      string
+	CreatedAt time.Time
+}
+
+// ByCreatedAt implements sort.Interface for []PodInfo based on the CreatedAt field
+type ByCreatedAt []PodInfo
 
 func (r resource) validate() error {
 
@@ -319,6 +329,110 @@ func (h APIHandler) ResourceStatusCheck(c *gin.Context) {
 			DidComplete:  !IsWorkflowRunning(resource.Status),
 			CurrentState: string(resource.Status.Stage.State),
 			CurrentTask:  resource.Status.Stage.TaskType.String(),
+		},
+	}
+
+	c.JSON(http.StatusOK, response(http.StatusOK, "", responseJSONData))
+
+}
+
+func (a ByCreatedAt) Len() int           { return len(a) }
+func (a ByCreatedAt) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
+func (a ByCreatedAt) Less(i, j int) bool { return a[i].CreatedAt.Before(a[j].CreatedAt) }
+
+func (h APIHandler) LastTaskLog(c *gin.Context) {
+	clusterName := c.Param("cluster_name")
+	clusterID := h.getClusterID(clusterName)
+
+	if clusterID == 0 {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("cluster_name '%s' not found", clusterName), nil))
+		return
+	}
+
+	resourceName := c.Param("name")
+	namespace := c.Param("namespace")
+
+	config, err := getVclusterConfig(h.clientset, "internal", clusterName)
+	if err != nil {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
+		return
+	}
+
+	clientset := kubernetes.NewForConfigOrDie(config)
+
+	// check if namespace exists before querying for pods by label
+	_, err = clientset.CoreV1().Namespaces().Get(context.Background(), namespace, metav1.GetOptions{})
+	if err != nil {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
+		return
+	}
+
+	// get the pods with a certain label in the default namespace
+	labelSelector := "terraforms.tf.galleybytes.com/resourceName=" + resourceName // change this to your label selector
+	pods, err := clientset.CoreV1().Pods(namespace).List(context.Background(), metav1.ListOptions{LabelSelector: labelSelector})
+	if err != nil {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
+		return
+	}
+
+	// check if pods were found with matching labels
+	if len(pods.Items) == 0 {
+		c.JSON(http.StatusNotFound, response(http.StatusNotFound, fmt.Sprintf("terraform pods not found on cluster '%s' for tf resource '%s/%s'", clusterName, namespace, resourceName), nil))
+		return
+	}
+
+	// create a slice of PodInfo from the pods
+	podInfos := make([]PodInfo, 0, len(pods.Items))
+
+	for _, pod := range pods.Items {
+		podInfos = append(podInfos, PodInfo{Name: pod.Name, CreatedAt: pod.CreationTimestamp.Time})
+	}
+
+	// sort the podInfos by creation timestamp in ascending order
+	sort.Sort(ByCreatedAt(podInfos))
+
+	// get the name of the newest pod
+	newestPod := podInfos[len(podInfos)-1].Name
+
+	pod, err := clientset.CoreV1().Pods(namespace).Get(context.Background(), newestPod, metav1.GetOptions{})
+	if err != nil {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
+		return
+	}
+
+	currentTask := ""
+	// find the environment variable
+	for _, container := range pod.Spec.Containers {
+		for _, envVar := range container.Env {
+			if envVar.Name == "TFO_TASK" {
+				currentTask = envVar.Value
+			}
+		}
+	}
+
+	// get the logs of the newest pod
+	logs, err := clientset.CoreV1().Pods(namespace).GetLogs(newestPod, &corev1.PodLogOptions{}).DoRaw(context.Background())
+	if err != nil {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
+		return
+	}
+
+	ansiColorRegex := regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]`)
+	cleanString := ansiColorRegex.ReplaceAllString(string(logs), "")
+
+	responseJSONData := []struct {
+		ClusterName string `json:"cluster_name"`
+		Namespace   string `json:"namespace"`
+		TFOResource string `json:"tfo_resource"`
+		CurrentTask string `json:"current_task"`
+		LastTaskLog string `json:"last_task_log"`
+	}{
+		{
+			ClusterName: string(clusterName),
+			Namespace:   string(namespace),
+			TFOResource: string(resourceName),
+			CurrentTask: string(currentTask),
+			LastTaskLog: string(cleanString),
 		},
 	}
 

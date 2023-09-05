@@ -644,7 +644,7 @@ func (h APIHandler) addResource(c *gin.Context) error {
 	}
 
 	appendClusterNameLabel(&jsonData.Terraform, cluster.Name)
-	addOriginEnvs(&jsonData.Terraform, h.tenant, clusterName)
+	addOriginEnvs(&jsonData.Terraform, h.tenant, clusterName, getApiURL(c, h.serviceIP))
 	// TODO Allow using a different queue
 	h.Queue.PushBack(jsonData.Terraform)
 
@@ -718,11 +718,32 @@ func (h APIHandler) updateResource(c *gin.Context) error {
 	}
 
 	appendClusterNameLabel(&jsonData.Terraform, cluster.Name)
-	addOriginEnvs(&jsonData.Terraform, h.tenant, clusterName)
+	addOriginEnvs(&jsonData.Terraform, h.tenant, clusterName, getApiURL(c, h.serviceIP))
 	// TODO Allow using a different queue
 	h.Queue.PushBack(jsonData.Terraform)
 
 	return nil
+}
+
+func getApiURL(c *gin.Context, serviceIP *string) string {
+	if serviceIP != nil {
+		if *serviceIP != "" {
+			return fmt.Sprintf("http://%s", *serviceIP)
+		}
+	}
+
+	scheme := "http" // default for the gin `Run` function
+	apiHost := c.Request.Host
+	xForwarededHost := c.Request.Header.Get("x-forwarded-host")
+	xForwardedScheme := c.Request.Header.Get("x-forwarded-scheme")
+	if xForwarededHost != "" {
+		apiHost = xForwarededHost
+	}
+	if xForwardedScheme != "" {
+		scheme = xForwardedScheme
+	}
+
+	return fmt.Sprintf("%s://%s", scheme, apiHost)
 }
 
 // appendClusterNameLabel will hack the cluster name to the resource's labels.
@@ -738,7 +759,7 @@ func appendClusterNameLabel(tf *tfv1beta1.Terraform, clusterName string) {
 }
 
 // addOriginEnvs will inject TFO_ORIGIN envs to the incoming resource
-func addOriginEnvs(tf *tfv1beta1.Terraform, tenant, clusterName string) {
+func addOriginEnvs(tf *tfv1beta1.Terraform, tenant, clusterName, apiURL string) {
 	generation := fmt.Sprintf("%d", tf.Generation)
 	resourceUUID := string(tf.UID)
 	token, err := generateTaskJWT(resourceUUID, tenant, clusterName, generation)
@@ -759,6 +780,10 @@ func addOriginEnvs(tf *tfv1beta1.Terraform, tenant, clusterName string) {
 			{
 				Name:  "TFO_API_LOG_TOKEN",
 				Value: token,
+			},
+			{
+				Name:  "TFO_API_URL",
+				Value: apiURL,
 			},
 		},
 	})

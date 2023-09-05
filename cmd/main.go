@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -28,6 +29,8 @@ var (
 	samlIssuer      string
 	samlRecipient   string
 	samlMetadataURL string
+	useServiceHost  bool
+	serviceName     string
 )
 
 func main() {
@@ -53,6 +56,10 @@ func main() {
 	viper.BindPFlag("saml-recipient", pflag.Lookup("saml-recipient"))
 	pflag.StringVar(&samlMetadataURL, "saml-metadata-url", "", "IDP Metadata URL")
 	viper.BindPFlag("saml-metadata-url", pflag.Lookup("saml-metadata-url"))
+	pflag.BoolVar(&useServiceHost, "use-service-host", false, "Auto detect the ClusterIP of service for callback")
+	viper.BindPFlag("use-service-host", pflag.Lookup("use-service-host"))
+	pflag.StringVar(&serviceName, "service-name", "", "When `--use-service-host` will looup clusterIP of service")
+	viper.BindPFlag("service-name", pflag.Lookup("service-name"))
 	pflag.Parse()
 
 	pflag.Set("alsologtostderr", "false")
@@ -70,6 +77,8 @@ func main() {
 	samlIssuer = viper.GetString("saml-issuer")
 	samlRecipient = viper.GetString("saml-recipient")
 	samlMetadataURL = viper.GetString("saml-metadata-url")
+	useServiceHost = viper.GetBool("use-service-host")
+	serviceName = viper.GetString("service-name")
 
 	clientset := kubernetes.NewForConfigOrDie(NewConfigOrDie(os.Getenv("KUBECONFIG")))
 	var database *gorm.DB
@@ -89,7 +98,13 @@ func main() {
 		ssoConfig.URL = ssoLoginURL
 	}
 
-	apiHandler := api.NewAPIHandler(database, &queue, clientset, ssoConfig)
+	var serviceIP string
+	if useServiceHost {
+		s := strings.ReplaceAll(strings.ToUpper(serviceName), "-", "_")
+		serviceIP = os.Getenv(fmt.Sprintf("%s_SERVICE_HOST", s))
+	}
+
+	apiHandler := api.NewAPIHandler(database, &queue, clientset, ssoConfig, &serviceIP)
 	apiHandler.RegisterRoutes()
 	apiHandler.Server.Run(port)
 }

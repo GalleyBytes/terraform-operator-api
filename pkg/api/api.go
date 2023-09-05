@@ -65,17 +65,11 @@ func NewAPIHandler(db *gorm.DB, queue *deque.Deque[tfv1beta1.Terraform], clients
 }
 
 func (h APIHandler) RegisterRoutes() {
-	auth := h.Server.Group("/")
-	auth.POST("/login", h.login)
-	auth.GET("/connect", h.defaultConnectMethod) // Determine preferred auth method
-	auth.GET("/sso", h.ssoRedirecter)
-	auth.POST("/sso/saml", h.samlConnecter)
-
-	empty := h.Server.Group("/")
-	empty.GET("/placeholder", func(c *gin.Context) {
+	preauth := h.Server.Group("/")
+	preauth.GET("/noauthtest", func(c *gin.Context) {
 		c.JSON(200, response(200, "", []string{"Please come again!"}))
 	})
-	empty.POST("/placeholder", func(c *gin.Context) {
+	preauth.POST("/noauthtest", func(c *gin.Context) {
 		var data any
 		err := c.BindJSON(&data)
 		if err != nil {
@@ -85,11 +79,16 @@ func (h APIHandler) RegisterRoutes() {
 		c.JSON(200, response(200, "", []any{data}))
 	})
 
-	routes := h.Server.Group("/api/v1/")
-	routes.Use(validateJwt)
-	routes.GET("/", h.Index)
+	preauth.POST("/login", h.login)
+	preauth.GET("/connect", h.defaultConnectMethod) // Determine preferred auth method
+	preauth.GET("/sso", h.ssoRedirecter)
+	preauth.POST("/sso/saml", h.samlConnecter)
 
-	cluster := routes.Group("/cluster")
+	authenticatedAPIV1 := h.Server.Group("/api/v1/")
+	authenticatedAPIV1.Use(validateJwt)
+	authenticatedAPIV1.GET("/", h.Index)
+
+	cluster := authenticatedAPIV1.Group("/cluster")
 	cluster.POST("/", h.AddCluster) // Resource from Add/Update/Delete event
 	cluster.GET("/:cluster_name/health", h.VClusterHealth)
 	cluster.GET("/:cluster_name/tfohealth", h.VClusterTFOHealth)
@@ -105,33 +104,35 @@ func (h APIHandler) RegisterRoutes() {
 	cluster.GET("/:cluster_name/resource/:namespace/:name/last-task-log", h.LastTaskLog)
 
 	// DEPRECATED usage of clusterid is being removed. todo ensure galleybytes projects aren't using this
-	clusterid := routes.Group("/cluster-id")
+	clusterid := authenticatedAPIV1.Group("/cluster-id")
 	clusterid.GET("/:cluster_id", h.GetCluster)
 	clusterid.GET("/:cluster_id/resources", h.GetClustersResources) // List Resources
 
 	// List Clusters
-	routes.GET("/clusters", h.ListClusters)
-	routes.GET("/resource/:tfo_resource_uuid", h.GetResourceByUUID)
+	authenticatedAPIV1.GET("/clusters", h.ListClusters)
+	authenticatedAPIV1.GET("/resource/:tfo_resource_uuid", h.GetResourceByUUID)
 	// List Generations
-	routes.GET("/resource/:tfo_resource_uuid/generations", h.GetDistinctGeneration)
+	authenticatedAPIV1.GET("/resource/:tfo_resource_uuid/generations", h.GetDistinctGeneration)
 	// ReourceSpec
-	routes.GET("/resource/:tfo_resource_uuid/resource-spec/generation/:generation", h.GetResourceSpec)
+	authenticatedAPIV1.GET("/resource/:tfo_resource_uuid/resource-spec/generation/:generation", h.GetResourceSpec)
 
-	routes.GET("/resource/:tfo_resource_uuid/logs", h.GetClustersResourcesLogs)
-	routes.GET("/resource/:tfo_resource_uuid/logs/generation/:generation", h.GetClustersResourcesLogs)
-	routes.GET("/resource/:tfo_resource_uuid/logs/generation/:generation/task/:task_type", h.GetClustersResourcesLogs)
-	routes.GET("/resource/:tfo_resource_uuid/logs/generation/:generation/task/:task_type/rerun/:rerun", h.GetClustersResourcesLogs)
-	routes.GET("/task/:task_pod_uuid/logs", h.GetTFOTaskLogsViaTask)
+	authenticatedAPIV1.GET("/resource/:tfo_resource_uuid/logs", h.GetClustersResourcesLogs)
+	authenticatedAPIV1.GET("/resource/:tfo_resource_uuid/logs/generation/:generation", h.GetClustersResourcesLogs)
+	authenticatedAPIV1.GET("/resource/:tfo_resource_uuid/logs/generation/:generation/task/:task_type", h.GetClustersResourcesLogs)
+	authenticatedAPIV1.GET("/resource/:tfo_resource_uuid/logs/generation/:generation/task/:task_type/rerun/:rerun", h.GetClustersResourcesLogs)
+	authenticatedAPIV1.GET("/task/:task_pod_uuid/logs", h.GetTFOTaskLogsViaTask)
+	authenticatedAPIV1.GET("/task/:task_pod_uuid", h.GetTaskPod) // TODO Should getting a task out of band (ie not with cluster info) be allowed?
 
-	// Tasks
-	routes.POST("/task", h.AddTaskPod)
-	routes.GET("/task/:task_pod_uuid", h.GetTaskPod) // TODO Should getting a task out of band (ie not with cluster info) be allowed?
+	// Tasks via task JWT
+	authenticatedTask := h.Server.Group("/api/v1/task")
+	authenticatedTask.Use(validateTaskJWT)
+	authenticatedTask.POST("/", h.AddTaskPod)
 
 	// Approval
-	routes.GET("/resource/:tfo_resource_uuid/approval-status", h.GetApprovalStatus)
-	routes.GET("/task/:task_pod_uuid/approval-status", h.GetApprovalStatusViaTaskPodUUID)
-	routes.POST("/approval/:task_pod_uuid", h.UpdateApproval)
-	routes.GET("/approvals", h.AllApprovals)
+	authenticatedAPIV1.GET("/resource/:tfo_resource_uuid/approval-status", h.GetApprovalStatus)
+	authenticatedAPIV1.GET("/task/:task_pod_uuid/approval-status", h.GetApprovalStatusViaTaskPodUUID)
+	authenticatedAPIV1.POST("/approval/:task_pod_uuid", h.UpdateApproval)
+	authenticatedAPIV1.GET("/approvals", h.AllApprovals)
 
 	// Websockets will be prefixed with /ws
 	sockets := h.Server.Group("/ws/")

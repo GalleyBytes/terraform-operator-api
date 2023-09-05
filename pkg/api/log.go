@@ -8,19 +8,28 @@ import (
 
 	"github.com/galleybytes/terraform-operator-api/pkg/common/models"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 func (h APIHandler) AddTaskPod(c *gin.Context) {
+	token, err := taskJWT(c.Request.Header["Token"][0])
+	if err != nil {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
+		return
+	}
+
+	claims := taskJWTClaims(token)
+	resourceUUID := claims["resourceUUID"]
+	generation := claims["generation"]
 
 	jsonData := struct {
-		TFOResourceUUID string `json:"tfo_resource_uuid"`
-		Generation      string `json:"tfo_resource_generation"`
-		RerunID         string `json:"rerun_id"`
-		TaskName        string `json:"task_name"`
-		UUID            string `json:"uuid"`
-		Content         string `json:"content"`
+		RerunID  string `json:"rerun_id"`
+		TaskName string `json:"task_name"`
+		UUID     string `json:"uuid"`
+
+		Content string `json:"content"`
 	}{}
-	err := c.BindJSON(&jsonData)
+	err = c.BindJSON(&jsonData)
 	if err != nil {
 		log.Println(err)
 		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
@@ -40,9 +49,9 @@ func (h APIHandler) AddTaskPod(c *gin.Context) {
 	taskPod := models.TaskPod{
 		UUID:            jsonData.UUID,
 		TaskType:        jsonData.TaskName,
-		Generation:      jsonData.Generation,
+		Generation:      generation,
 		Rerun:           rerunID,
-		TFOResourceUUID: jsonData.TFOResourceUUID,
+		TFOResourceUUID: resourceUUID,
 	}
 	result := h.DB.Where("uuid = ?", &jsonData.UUID).FirstOrCreate(&taskPod)
 	if result.Error != nil {
@@ -55,7 +64,7 @@ func (h APIHandler) AddTaskPod(c *gin.Context) {
 	}
 
 	// Combine the creation or finding of the taskPod with logging when content is sent
-	err = h.saveTaskLog(taskPod.UUID, jsonData.Content)
+	err = saveTaskLog(h.DB, taskPod.UUID, jsonData.Content)
 	if err != nil {
 		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
 		return
@@ -65,7 +74,7 @@ func (h APIHandler) AddTaskPod(c *gin.Context) {
 
 }
 
-func (h APIHandler) saveTaskLog(taskUUID, content string) error {
+func saveTaskLog(db *gorm.DB, taskUUID, content string) error {
 
 	taskLog := models.TFOTaskLog{
 		TaskPodUUID: taskUUID,
@@ -73,19 +82,19 @@ func (h APIHandler) saveTaskLog(taskUUID, content string) error {
 		Size:        uint64(len([]byte(content))),
 	}
 
-	if result := h.DB.Where("task_pod_uuid = ?", &taskLog.TaskPodUUID).FirstOrCreate(&taskLog); result.Error != nil {
+	if result := db.Where("task_pod_uuid = ?", &taskLog.TaskPodUUID).FirstOrCreate(&taskLog); result.Error != nil {
 		return fmt.Errorf("failed to save task log: %+v, %+v", taskLog, result.Error)
 	}
 
 	if taskLog.Size != uint64(len([]byte(content))) {
 		if taskLog.Size > uint64(len([]byte(content))) {
-			return fmt.Errorf("The message size was smaller than already recorded")
+			return fmt.Errorf("sent log's size was smaller than previously version")
 		}
 		// The content has been updated. Read the bytes after what has already been written to preserve the
 		// original content. We don't want to allow logs in the database to be changed once they are written.
 		taskLog.Message += string([]byte(content)[taskLog.Size:])
 		taskLog.Size = uint64(len([]byte(taskLog.Message)))
-		if result := h.DB.Save(&taskLog); result.Error != nil {
+		if result := db.Save(&taskLog); result.Error != nil {
 			return result.Error
 		}
 	}

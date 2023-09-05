@@ -18,6 +18,7 @@ type APIHandler struct {
 	Queue     *deque.Deque[tfv1beta1.Terraform]
 	clientset kubernetes.Interface
 	ssoConfig *SSOConfig
+	serviceIP *string
 	tenant    string
 }
 
@@ -53,7 +54,7 @@ func NewSAMLConfig(issuer, recipient, metadataURL string) (*SSOConfig, error) {
 	}, nil
 }
 
-func NewAPIHandler(db *gorm.DB, queue *deque.Deque[tfv1beta1.Terraform], clientset kubernetes.Interface, ssoConfig *SSOConfig) *APIHandler {
+func NewAPIHandler(db *gorm.DB, queue *deque.Deque[tfv1beta1.Terraform], clientset kubernetes.Interface, ssoConfig *SSOConfig, serviceIP *string) *APIHandler {
 
 	return &APIHandler{
 		Server:    gin.Default(),
@@ -61,6 +62,7 @@ func NewAPIHandler(db *gorm.DB, queue *deque.Deque[tfv1beta1.Terraform], clients
 		Queue:     queue,
 		clientset: clientset,
 		ssoConfig: ssoConfig,
+		serviceIP: serviceIP,
 	}
 }
 
@@ -126,7 +128,7 @@ func (h APIHandler) RegisterRoutes() {
 	// Tasks via task JWT
 	authenticatedTask := h.Server.Group("/api/v1/task")
 	authenticatedTask.Use(validateTaskJWT)
-	authenticatedTask.POST("/", h.AddTaskPod)
+	authenticatedTask.POST("", h.AddTaskPod)
 
 	// Approval
 	authenticatedAPIV1.GET("/resource/:tfo_resource_uuid/approval-status", h.GetApprovalStatus)

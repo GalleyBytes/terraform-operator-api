@@ -61,9 +61,10 @@ func (h APIHandler) AddTaskPod(c *gin.Context) {
 
 	if jsonData.Content == "" {
 		c.JSON(http.StatusOK, response(http.StatusOK, "", []models.TaskPod{taskPod}))
+		return
 	}
 
-	// Combine the creation or finding of the taskPod with logging when content is sent
+	// Task calls will generally contain content. Save the message to the database.
 	err = saveTaskLog(h.DB, taskPod.UUID, jsonData.Content)
 	if err != nil {
 		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
@@ -74,6 +75,7 @@ func (h APIHandler) AddTaskPod(c *gin.Context) {
 
 }
 
+// Write or update logs in database
 func saveTaskLog(db *gorm.DB, taskUUID, content string) error {
 
 	taskLog := models.TFOTaskLog{

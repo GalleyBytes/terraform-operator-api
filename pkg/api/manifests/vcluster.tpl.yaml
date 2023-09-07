@@ -13,9 +13,10 @@ items:
     namespace: "{{ .namespace }}"
     labels:
       app: vcluster
-      chart: "vcluster-0.15.2"
+      chart: "vcluster-0.15.7"
       release: "tfo-virtual-cluster"
       heritage: "Helm"
+
 - # Source: vcluster/templates/workloadserviceaccount.yaml
   apiVersion: v1
   kind: ServiceAccount
@@ -24,9 +25,10 @@ items:
     namespace: "{{ .namespace }}"
     labels:
       app: vcluster
-      chart: "vcluster-0.15.2"
+      chart: "vcluster-0.15.7"
       release: "tfo-virtual-cluster"
       heritage: "Helm"
+
 - # Source: vcluster/templates/coredns.yaml
   apiVersion: v1
   kind: ConfigMap
@@ -89,27 +91,25 @@ items:
         name: coredns
         namespace: kube-system
       data:
-        Corefile: |
+        Corefile: |-
           .:1053 {
-              {{"{{.LOG_IN_DEBUG}}"}}
               errors
               health
               ready
               rewrite name regex .*\.nodes\.vcluster\.com kubernetes.default.svc.cluster.local
               kubernetes cluster.local in-addr.arpa ip6.arpa {
-                pods insecure
-                fallthrough in-addr.arpa ip6.arpa
+                  pods insecure
+                  fallthrough in-addr.arpa ip6.arpa
               }
-              hosts /etc/coredns/NodeHosts {
-                ttl 60
-                reload 15s
-                fallthrough
+              hosts /etc/NodeHosts {
+                  ttl 60
+                  reload 15s
+                  fallthrough
               }
               prometheus :9153
               forward . /etc/resolv.conf
               cache 30
               loop
-              reload
               loadbalance
           }
 
@@ -184,8 +184,8 @@ items:
                   runAsGroup: {{"{{.RUN_AS_GROUP}}"}}
                   allowPrivilegeEscalation: false
                   capabilities:
-                    drop:
-                      - ALL
+                    add:
+                      - NET_BIND_SERVICE
                   readOnlyRootFilesystem: true
                 livenessProbe:
                   httpGet:
@@ -250,6 +250,7 @@ items:
           - name: metrics
             port: 9153
             protocol: TCP
+
 - # Source: vcluster/templates/init-configmap.yaml
   apiVersion: v1
   kind: ConfigMap
@@ -258,7 +259,7 @@ items:
     namespace: "{{ .namespace }}"
     labels:
       app: vcluster
-      chart: "vcluster-0.15.2"
+      chart: "vcluster-0.15.7"
       release: "tfo-virtual-cluster"
       heritage: "Helm"
   data:
@@ -423,7 +424,7 @@ items:
               runAsUser: 1001
             containers:
               - name: terraform-operator
-                image: ghcr.io/galleybytes/terraform-operator:v0.12.0
+                image: ghcr.io/galleybytes/terraform-operator:v0.13.3
                 imagePullPolicy: IfNotPresent
                 command:
                   - terraform-operator
@@ -744,6 +745,11 @@ items:
                                       key:
                                         description: Key in the secret ref. Default to `token`
                                         type: string
+                                      lockSecretDeletion:
+                                        description: Set finalizer from controller on the
+                                          secret to prevent delete flow breaking Works only
+                                          with spec.ignoreDelete = true
+                                        type: boolean
                                       name:
                                         description: Name the secret name that has the token
                                           or password
@@ -771,6 +777,11 @@ items:
                                       key:
                                         description: Key in the secret ref. Default to `id_rsa`
                                         type: string
+                                      lockSecretDeletion:
+                                        description: Set finalizer from controller on the
+                                          secret to prevent delete flow breaking. Works
+                                          only with `spec.ignoreDelete = true`.
+                                        type: boolean
                                       name:
                                         description: Name the secret name that has the SSH
                                           key
@@ -849,6 +860,11 @@ items:
                             key:
                               description: Key in the secret ref. Default to `id_rsa`
                               type: string
+                            lockSecretDeletion:
+                              description: Set finalizer from controller on the secret to
+                                prevent delete flow breaking. Works only with `spec.ignoreDelete
+                                = true`.
+                              type: boolean
                             name:
                               description: Name the secret name that has the SSH key
                               type: string
@@ -1344,6 +1360,8 @@ items:
           storage: true
           subresources:
             status: {}
+
+
 - # Source: vcluster/templates/rbac/role.yaml
   kind: Role
   apiVersion: rbac.authorization.k8s.io/v1
@@ -1352,7 +1370,7 @@ items:
     namespace: "{{ .namespace }}"
     labels:
       app: vcluster
-      chart: "vcluster-0.15.2"
+      chart: "vcluster-0.15.7"
       release: "tfo-virtual-cluster"
       heritage: "Helm"
   rules:
@@ -1368,6 +1386,7 @@ items:
     - apiGroups: ["apps"]
       resources: ["statefulsets", "replicasets", "deployments"]
       verbs: ["get", "list", "watch"]
+
 - # Source: vcluster/templates/rbac/rolebinding.yaml
   kind: RoleBinding
   apiVersion: rbac.authorization.k8s.io/v1
@@ -1376,7 +1395,7 @@ items:
     namespace: "{{ .namespace }}"
     labels:
       app: vcluster
-      chart: "vcluster-0.15.2"
+      chart: "vcluster-0.15.7"
       release: "tfo-virtual-cluster"
       heritage: "Helm"
   subjects:
@@ -1387,6 +1406,7 @@ items:
     kind: Role
     name: tfo-virtual-cluster
     apiGroup: rbac.authorization.k8s.io
+
 - # Source: vcluster/templates/service.yaml
   apiVersion: v1
   kind: Service
@@ -1395,7 +1415,7 @@ items:
     namespace: "{{ .namespace }}"
     labels:
       app: vcluster
-      chart: "vcluster-0.15.2"
+      chart: "vcluster-0.15.7"
       release: "tfo-virtual-cluster"
       heritage: "Helm"
   spec:
@@ -1412,6 +1432,7 @@ items:
     selector:
       app: vcluster
       release: tfo-virtual-cluster
+
 - # Source: vcluster/templates/statefulset-service.yaml
   apiVersion: v1
   kind: Service
@@ -1420,7 +1441,7 @@ items:
     namespace: "{{ .namespace }}"
     labels:
       app: tfo-virtual-cluster-vcluster
-      chart: "vcluster-0.15.2"
+      chart: "vcluster-0.15.7"
       release: "tfo-virtual-cluster"
       heritage: "Helm"
   spec:
@@ -1433,6 +1454,7 @@ items:
     selector:
       app: vcluster
       release: "tfo-virtual-cluster"
+
 - # Source: vcluster/templates/statefulset.yaml
   apiVersion: apps/v1
   kind: StatefulSet
@@ -1441,7 +1463,7 @@ items:
     namespace: "{{ .namespace }}"
     labels:
       app: vcluster
-      chart: "vcluster-0.15.2"
+      chart: "vcluster-0.15.7"
       release: "tfo-virtual-cluster"
       heritage: "Helm"
   spec:
@@ -1477,8 +1499,12 @@ items:
           - name: coredns
             configMap:
               name: tfo-virtual-cluster-coredns
+          - name: custom-config-volume
+            configMap:
+              name: coredns-custom
+              optional: true
         containers:
-        - image: rancher/k3s:v1.26.0-k3s1
+        - image: rancher/k3s:v1.27.3-k3s1
           name: vcluster
           # k3s has a problem running as pid 1 and disabled agents on cgroupv2
           # nodes as it will try to evacuate the cgroups there. Starting k3s
@@ -1521,9 +1547,10 @@ items:
               cpu: 200m
               memory: 256Mi
         - name: syncer
-          image: "ghcr.io/loft-sh/vcluster:0.15.2"
+          image: "ghcr.io/loft-sh/vcluster:0.15.7"
           args:
             - --name=tfo-virtual-cluster
+            - --kube-config=/data/k3s-config/kube-config.yaml
             - --service-account=vc-workload-tfo-virtual-cluster
             - --kube-config-context-name=my-vcluster
             - --leader-elect=false
@@ -1563,9 +1590,11 @@ items:
             - name: coredns
               mountPath: /manifests/coredns
               readOnly: true
+            - name: custom-config-volume
+              mountPath: /etc/coredns/custom
+              readOnly: true
             - mountPath: /data
               name: data
-              readOnly: true
           resources:
             limits:
               cpu: 1000m

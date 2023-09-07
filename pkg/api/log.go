@@ -23,9 +23,10 @@ func (h APIHandler) AddTaskPod(c *gin.Context) {
 	generation := claims["generation"]
 
 	jsonData := struct {
-		RerunID  string `json:"rerun_id"`
-		TaskName string `json:"task_name"`
-		UUID     string `json:"uuid"`
+		RerunID             string `json:"rerun_id"`
+		TaskName            string `json:"task_name"`
+		UUID                string `json:"uuid"`
+		InClusterGeneration string `json:"generation"`
 
 		Content string `json:"content"`
 	}{}
@@ -47,11 +48,12 @@ func (h APIHandler) AddTaskPod(c *gin.Context) {
 	}
 
 	taskPod := models.TaskPod{
-		UUID:            jsonData.UUID,
-		TaskType:        jsonData.TaskName,
-		Generation:      generation,
-		Rerun:           rerunID,
-		TFOResourceUUID: resourceUUID,
+		UUID:                jsonData.UUID,
+		TaskType:            jsonData.TaskName,
+		Generation:          generation,
+		Rerun:               rerunID,
+		TFOResourceUUID:     resourceUUID,
+		InClusterGeneration: jsonData.InClusterGeneration,
 	}
 	result := h.DB.Where("uuid = ?", &jsonData.UUID).FirstOrCreate(&taskPod)
 	if result.Error != nil {

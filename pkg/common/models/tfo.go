@@ -47,12 +47,13 @@ type TFOResourceSpec struct {
 }
 
 type TaskPod struct {
-	UUID            string      `json:"uuid" gorm:"primaryKey"`
-	TaskType        string      `json:"task_type"`
-	Rerun           int         `json:"rerun"`
-	Generation      string      `json:"generation"`
-	TFOResource     TFOResource `json:"tfo_resource,omitempty"`
-	TFOResourceUUID string      `json:"tfo_resource_uuid"`
+	UUID                string      `json:"uuid" gorm:"primaryKey"`
+	TaskType            string      `json:"task_type"`
+	Rerun               int         `json:"rerun"`
+	Generation          string      `json:"generation"`
+	InClusterGeneration string      `json:"in_cluster_generation"`
+	TFOResource         TFOResource `json:"tfo_resource,omitempty"`
+	TFOResourceUUID     string      `json:"tfo_resource_uuid"`
 }
 
 type Approval struct {

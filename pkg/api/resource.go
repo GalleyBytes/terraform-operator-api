@@ -672,10 +672,13 @@ func getVclusterConfig(clientset kubernetes.Interface, tenantId, clusterName str
 
 func (h APIHandler) ResourceEvent(c *gin.Context) {
 	if c.Request.Method == http.MethodPost {
-		err := h.addResource(c)
+		msg, err := h.addResource(c)
 		if err != nil {
 			log.Println(err)
 			c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
+			return
+		} else if msg != "" {
+			c.JSON(http.StatusOK, response(http.StatusOK, msg, []string{}))
 			return
 		}
 		c.JSON(http.StatusNoContent, nil)
@@ -701,29 +704,29 @@ func (h APIHandler) ResourceEvent(c *gin.Context) {
 	c.JSON(http.StatusNotFound, response(http.StatusNotFound, "", []string{}))
 }
 
-func (h APIHandler) addResource(c *gin.Context) error {
+func (h APIHandler) addResource(c *gin.Context) (string, error) {
 	clusterName := c.Param("cluster_name")
 	clusterID := h.getClusterID(clusterName)
 	if clusterID == 0 {
-		return fmt.Errorf("cluster_name '%s' not found", clusterName)
+		return "", fmt.Errorf("cluster_name '%s' not found", clusterName)
 	}
 
 	jsonData := resource{}
 	err := c.BindJSON(&jsonData)
 	if err != nil {
 		log.Println("Unable to parse JSON from request data")
-		return errors.New("Unable to parse JSON from request data: " + err.Error())
+		return "", errors.New("Unable to parse JSON from request data: " + err.Error())
 	}
 
 	// if tfoResource.UUID == "" {}
 	err = jsonData.validate()
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	tfoResource, tfoResourceSpec, err := jsonData.Parse(clusterID)
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	cluster := &models.Cluster{
@@ -734,7 +737,7 @@ func (h APIHandler) addResource(c *gin.Context) error {
 	result := h.DB.First(cluster)
 	if result.Error != nil {
 		// cluster must exist prior to adding resources
-		return result.Error
+		return "", result.Error
 	}
 
 	// new resources must not already exist in the database
@@ -742,19 +745,19 @@ func (h APIHandler) addResource(c *gin.Context) error {
 	result = h.DB.First(&tfoResource)
 	if result.Error == nil {
 		// the UUID exists in the database
-		return errors.New("TFOResource already exists in database")
+		return fmt.Sprintf("tf resource '%s/%s' already exists", tfoResource.Namespace, tfoResource.Name), nil
 	} else if result.Error != nil && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return fmt.Errorf("error occurred when looking for tfo_resource: %v", result.Error)
+		return "", fmt.Errorf("error occurred when looking for tfo_resource: %v", result.Error)
 	}
 
 	result = h.DB.Create(&tfoResource)
 	if result.Error != nil {
-		return fmt.Errorf("error saving tfo_resource: %s", result.Error)
+		return "", fmt.Errorf("error saving tfo_resource: %s", result.Error)
 	}
 
 	result = h.DB.Create(&tfoResourceSpec)
 	if result.Error != nil {
-		return fmt.Errorf("error saving tfo_resource_spec: %s", result.Error)
+		return "", fmt.Errorf("error saving tfo_resource_spec: %s", result.Error)
 	}
 
 	appendClusterNameLabel(&jsonData.Terraform, cluster.Name)
@@ -762,7 +765,7 @@ func (h APIHandler) addResource(c *gin.Context) error {
 	// TODO Allow using a different queue
 	h.Queue.PushBack(jsonData.Terraform)
 
-	return nil
+	return "", nil
 }
 
 func (h APIHandler) updateResource(c *gin.Context) error {

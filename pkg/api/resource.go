@@ -744,7 +744,8 @@ func (h APIHandler) addResource(c *gin.Context) (string, error) {
 	// var x models.TFOResource
 	result = h.DB.First(&tfoResource)
 	if result.Error == nil {
-		// the UUID exists in the database
+		// the UUID exists in the database. The result will return a success with the message the resource
+		// already exists. To update the resource_spec, the client must make a PUT request instead.
 		return fmt.Sprintf("tf resource '%s/%s' already exists", tfoResource.Namespace, tfoResource.Name), nil
 	} else if result.Error != nil && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		return "", fmt.Errorf("error occurred when looking for tfo_resource: %v", result.Error)
@@ -760,8 +761,11 @@ func (h APIHandler) addResource(c *gin.Context) (string, error) {
 		return "", fmt.Errorf("error saving tfo_resource_spec: %s", result.Error)
 	}
 
+	apiURL := getApiURL(c, h.serviceIP)
+	token := fetchToken(h.DB, *tfoResourceSpec, h.tenant, clusterName, apiURL)
 	appendClusterNameLabel(&jsonData.Terraform, cluster.Name)
-	addOriginEnvs(&jsonData.Terraform, h.tenant, clusterName, getApiURL(c, h.serviceIP))
+	addOriginEnvs(&jsonData.Terraform, h.tenant, clusterName, apiURL, token)
+
 	// TODO Allow using a different queue
 	h.Queue.PushBack(jsonData.Terraform)
 
@@ -830,16 +834,42 @@ func (h APIHandler) updateResource(c *gin.Context) error {
 		if result.Error != nil {
 			return result.Error
 		}
+		tfoResourceSpecFromDatabase = *tfoResourceSpec
 	} else if result.Error != nil {
 		return fmt.Errorf("error occurred when looking for tfo_resource_spec: %v", result.Error)
 	}
 
-	appendClusterNameLabel(&jsonData.Terraform, cluster.Name)
-	addOriginEnvs(&jsonData.Terraform, h.tenant, clusterName, getApiURL(c, h.serviceIP))
+	apiURL := getApiURL(c, h.serviceIP)
+	token := fetchToken(h.DB, tfoResourceSpecFromDatabase, h.tenant, clusterName, apiURL)
+	appendClusterNameLabel(&jsonData.Terraform, clusterName)
+	addOriginEnvs(&jsonData.Terraform, h.tenant, clusterName, apiURL, token)
 	// TODO Allow using a different queue
 	h.Queue.PushBack(jsonData.Terraform)
 
 	return nil
+}
+
+func fetchToken(db *gorm.DB, tfoResourceSpec models.TFOResourceSpec, tenant, clusterName, apiURL string) string {
+
+	generation := tfoResourceSpec.Generation
+	resourceUUID := tfoResourceSpec.TFOResourceUUID
+	token := tfoResourceSpec.TaskToken
+
+	if token == "" {
+		t, err := generateTaskJWT(resourceUUID, tenant, clusterName, generation)
+		if err != nil {
+			log.Printf("Failed to generate taskJWT: %s", err)
+		} else {
+			token = t
+			tfoResourceSpec.TaskToken = token
+			result := db.Save(&tfoResourceSpec)
+			if result.Error != nil {
+				log.Printf("Failed to save task_token to tfo_resource_specs: %s", result.Error.Error())
+			}
+		}
+	}
+
+	return token
 }
 
 func getApiURL(c *gin.Context, serviceIP *string) string {
@@ -876,13 +906,9 @@ func appendClusterNameLabel(tf *tfv1beta1.Terraform, clusterName string) {
 }
 
 // addOriginEnvs will inject TFO_ORIGIN envs to the incoming resource
-func addOriginEnvs(tf *tfv1beta1.Terraform, tenant, clusterName, apiURL string) {
+func addOriginEnvs(tf *tfv1beta1.Terraform, tenant, clusterName, apiURL, token string) {
 	generation := fmt.Sprintf("%d", tf.Generation)
 	resourceUUID := string(tf.UID)
-	token, err := generateTaskJWT(resourceUUID, tenant, clusterName, generation)
-	if err != nil {
-		log.Printf("Failed to generate taskJWT: %s", err)
-	}
 	tf.Spec.TaskOptions = append(tf.Spec.TaskOptions, tfv1beta1.TaskOption{
 		For: []tfv1beta1.TaskName{"*"},
 		Env: []corev1.EnvVar{

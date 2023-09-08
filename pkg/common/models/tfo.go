@@ -44,6 +44,7 @@ type TFOResourceSpec struct {
 	TFOResourceUUID string      `json:"tfo_resource_uuid"`
 	Generation      string      `json:"generation"`
 	ResourceSpec    string      `json:"resource_spec"`
+	TaskToken       string      `json:"task_token"`
 }
 
 type TaskPod struct {

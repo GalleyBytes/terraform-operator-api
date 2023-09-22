@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -398,18 +399,22 @@ func (h APIHandler) GetApprovalStatusViaTaskPodUUID(c *gin.Context) {
 		c.JSON(http.StatusOK, response(http.StatusOK, "Approval "+result.Error.Error(), []approvalResponse{
 			{
 				Status: "nodata",
-				Approval: models.Approval{
-					TaskPodUUID: taskPodUUID,
-				},
+				// Approval: models.Approval{
+				// 	TaskPodUUID: taskPodUUID,
+				// },
 			},
 		}))
 		return
 	}
-
+	var status string = "nodata"
+	if approvals[0].IsApproved {
+		status = "approved"
+	} else {
+		status = "canceled"
+	}
 	c.JSON(http.StatusOK, response(http.StatusOK, "", []approvalResponse{
 		{
-			Approval: approvals[0],
-			Status:   "complete",
+			Status: status,
 		},
 	}))
 }
@@ -630,13 +635,13 @@ func (h APIHandler) ResourceLogWatcher(c *gin.Context) {
 }
 
 // Check if terraform namespace/name resource exists in vcluster
-func getResource(parentClientset kubernetes.Interface, clusterName, namespace, name string, c *gin.Context) (*tfv1beta1.Terraform, error) {
+func getResource(parentClientset kubernetes.Interface, clusterName, namespace, name string, ctx context.Context) (*tfv1beta1.Terraform, error) {
 	config, err := getVclusterConfig(parentClientset, "internal", clusterName)
 	if err != nil {
 		return nil, err
 	}
 	tfoclientset := tfo.NewForConfigOrDie(config)
-	return tfoclientset.TfV1beta1().Terraforms(namespace).Get(c, name, metav1.GetOptions{})
+	return tfoclientset.TfV1beta1().Terraforms(namespace).Get(ctx, name, metav1.GetOptions{})
 
 }
 

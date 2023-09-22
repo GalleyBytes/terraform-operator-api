@@ -105,6 +105,10 @@ func (h APIHandler) RegisterRoutes() {
 	cluster.GET("/:cluster_name/status/:namespace/:name", h.ResourceStatusCheck) // Alias
 	cluster.GET("/:cluster_name/resource/:namespace/:name/last-task-log", h.LastTaskLog)
 
+	metrics := preauth.Group("/metrics")
+	metrics.GET("/total/resources", h.TotalResources)
+	metrics.GET("/total/failed-resources", h.TotalFailedResources)
+
 	// DEPRECATED usage of clusterid is being removed. todo ensure galleybytes projects aren't using this
 	clusterid := authenticatedAPIV1.Group("/cluster-id")
 	clusterid.GET("/:cluster_id", h.GetCluster)
@@ -122,17 +126,19 @@ func (h APIHandler) RegisterRoutes() {
 	authenticatedAPIV1.GET("/resource/:tfo_resource_uuid/logs/generation/:generation", h.GetClustersResourcesLogs)
 	authenticatedAPIV1.GET("/resource/:tfo_resource_uuid/logs/generation/:generation/task/:task_type", h.GetClustersResourcesLogs)
 	authenticatedAPIV1.GET("/resource/:tfo_resource_uuid/logs/generation/:generation/task/:task_type/rerun/:rerun", h.GetClustersResourcesLogs)
-	authenticatedAPIV1.GET("/task/:task_pod_uuid/logs", h.GetTFOTaskLogsViaTask)
-	authenticatedAPIV1.GET("/task/:task_pod_uuid", h.GetTaskPod) // TODO Should getting a task out of band (ie not with cluster info) be allowed?
+	// authenticatedAPIV1.GET("/task/:task_pod_uuid/logs", h.GetTFOTaskLogsViaTask)
+	// authenticatedAPIV1.GET("/task/:task_pod_uuid", h.GetTaskPod) // TODO Should getting a task out of band (ie not with cluster info) be allowed?
 
 	// Tasks via task JWT
 	authenticatedTask := h.Server.Group("/api/v1/task")
 	authenticatedTask.Use(validateTaskJWT)
 	authenticatedTask.POST("", h.AddTaskPod)
+	authenticatedTask.GET("/status", h.ResourceStatusCheckViaTask)
+	authenticatedTask.POST("/status", h.UpdateResourceStatus)
+	authenticatedTask.GET("/:task_pod_uuid/approval-status", h.GetApprovalStatusViaTaskPodUUID)
 
 	// Approval
 	authenticatedAPIV1.GET("/resource/:tfo_resource_uuid/approval-status", h.GetApprovalStatus)
-	authenticatedAPIV1.GET("/task/:task_pod_uuid/approval-status", h.GetApprovalStatusViaTaskPodUUID)
 	authenticatedAPIV1.POST("/approval/:task_pod_uuid", h.UpdateApproval)
 	authenticatedAPIV1.GET("/approvals", h.AllApprovals)
 

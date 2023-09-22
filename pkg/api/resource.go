@@ -86,10 +86,9 @@ func (r resource) Parse(clusterID uint) (*models.TFOResource, *models.TFOResourc
 		Name:              r.Name,
 		Namespace:         r.Namespace,
 		UUID:              uuid,
-		Annotations:       annotations,
-		Labels:            labels,
 		CurrentGeneration: currentGeneration,
 		ClusterID:         clusterID,
+		CurrentState:      models.Untracked,
 	}
 
 	spec, err := jsonify(r.Spec)
@@ -100,6 +99,8 @@ func (r resource) Parse(clusterID uint) (*models.TFOResource, *models.TFOResourc
 		TFOResourceUUID: uuid,
 		Generation:      currentGeneration,
 		ResourceSpec:    spec,
+		Annotations:     annotations,
+		Labels:          labels,
 	}
 
 	return &tfoResource, &tfoResourceSpec, nil
@@ -232,6 +233,22 @@ func (h APIHandler) applyRawManifest(c *gin.Context, config *rest.Config, raw []
 	return nil
 }
 
+func getClusterName(clusterID uint, db *gorm.DB) string {
+	var clusters []models.Cluster
+	if result := db.Where("id = ?", clusterID).First(&clusters); result.Error != nil {
+		return ""
+	}
+	return clusters[0].Name
+}
+
+func getClusterID(clusterName string, db *gorm.DB) uint {
+	var clusters []models.Cluster
+	if result := db.Where("name = ?", clusterName).First(&clusters); result.Error != nil {
+		return 0
+	}
+	return clusters[0].ID
+}
+
 func (h APIHandler) getClusterID(clusterName string) uint {
 	// TODO Use a temporary cache to store clusterName to remove a db lookup
 	var clusters []models.Cluster
@@ -303,6 +320,13 @@ func (h APIHandler) VClusterTFOHealth(c *gin.Context) {
 	c.JSON(http.StatusNoContent, nil)
 }
 
+type statusCheckResponse struct {
+	DidStart     bool   `json:"did_start"`
+	DidComplete  bool   `json:"did_complete"`
+	CurrentState string `json:"current_state"`
+	CurrentTask  string `json:"current_task"`
+}
+
 func (h APIHandler) ResourceStatusCheck(c *gin.Context) {
 	clusterName := c.Param("cluster_name")
 	clusterID := h.getClusterID(clusterName)
@@ -314,18 +338,46 @@ func (h APIHandler) ResourceStatusCheck(c *gin.Context) {
 	name := c.Param("name")
 	namespace := c.Param("namespace")
 
-	resource, err := getResource(h.clientset, clusterName, namespace, name, c)
+	returnStatusCheck(c, h.clientset, clusterName, namespace, name)
+}
+
+func (h APIHandler) ResourceStatusCheckViaTask(c *gin.Context) {
+	token, err := taskJWT(c.Request.Header["Token"][0])
 	if err != nil {
-		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("tf resource '%s/%s' not found", namespace, name), nil))
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
 		return
 	}
 
-	responseJSONData := []struct {
-		DidStart     bool   `json:"did_start"`
-		DidComplete  bool   `json:"did_complete"`
-		CurrentState string `json:"current_state"`
-		CurrentTask  string `json:"current_task"`
-	}{
+	claims := taskJWTClaims(token)
+	resourceUUID := claims["resourceUUID"]
+
+	// new resources must not already exist in the database
+	tfoResourceFromDatabase := models.TFOResource{}
+	result := h.DB.Where("uuid = ?", resourceUUID).First(&tfoResourceFromDatabase)
+	if result.Error != nil {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("error getting tfoResource: %v", result.Error), nil))
+		return
+	}
+
+	clusterName := getClusterName(tfoResourceFromDatabase.ClusterID, h.DB)
+	namespace := tfoResourceFromDatabase.Namespace
+	name := tfoResourceFromDatabase.Name
+
+	returnStatusCheck(c, h.clientset, clusterName, namespace, name)
+}
+
+func returnStatusCheck(c *gin.Context, clientset kubernetes.Interface, clusterName, namespace, name string) {
+	resource, err := getResource(clientset, clusterName, namespace, name, c)
+	if err != nil {
+		if kerrors.IsNotFound(err) {
+			c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("tf resource '%s/%s' not found", namespace, name), nil))
+			return
+		}
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("tf resource '%s/%s' status check failed: %s", namespace, name, err), nil))
+		return
+	}
+
+	responseJSONData := []statusCheckResponse{
 		{
 			DidStart:     resource.Generation == resource.Status.Stage.Generation,
 			DidComplete:  !IsWorkflowRunning(resource.Status),
@@ -333,9 +385,45 @@ func (h APIHandler) ResourceStatusCheck(c *gin.Context) {
 			CurrentTask:  resource.Status.Stage.TaskType.String(),
 		},
 	}
-
 	c.JSON(http.StatusOK, response(http.StatusOK, "", responseJSONData))
+}
 
+func (h APIHandler) UpdateResourceStatus(c *gin.Context) {
+	jsonData := struct {
+		Status string `json:"status"`
+	}{}
+	err := c.BindJSON(&jsonData)
+	if err != nil {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("Unable to parse JSON from request data: %s", err), nil))
+		return
+	}
+
+	token, err := taskJWT(c.Request.Header["Token"][0])
+	if err != nil {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
+		return
+	}
+
+	claims := taskJWTClaims(token)
+	resourceUUID := claims["resourceUUID"]
+
+	// new resources must not already exist in the database
+	tfoResourceFromDatabase := models.TFOResource{}
+	result := h.DB.Where("uuid = ?", resourceUUID).First(&tfoResourceFromDatabase)
+	if result.Error != nil {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("error getting tfoResource: %v", result.Error), nil))
+		return
+	}
+
+	tfoResourceFromDatabase.CurrentState = models.ResourceState(jsonData.Status)
+
+	result = h.DB.Save(tfoResourceFromDatabase)
+	if result.Error != nil {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("error updating tfoResource: %v", result.Error), nil))
+		return
+	}
+
+	c.JSON(http.StatusNoContent, nil)
 }
 
 func (a ByCreatedAt) Len() int           { return len(a) }
@@ -751,13 +839,33 @@ func (h APIHandler) addResource(c *gin.Context) (string, error) {
 		return "", fmt.Errorf("error saving tfo_resource: %s", result.Error)
 	}
 
+	// A tfo resource has a namespace and a name, which are used to identify it uniquely within the cluster.
+	// Upon the successful creation of a new tfoResource, any previous tfoResources matching the
+	// clusterID/namespace/name must be "deleted" by adding a "deleted_at" timestamp.
+	var tfoResources []models.TFOResource
+	result = h.DB.Where("name = ? AND namespace = ? AND cluster_id = ?", tfoResource.Name, tfoResource.Namespace, tfoResource.ClusterID).Order("created_at desc").Offset(1).Find(&tfoResources)
+	if result.Error == nil {
+		for i, _ := range tfoResources {
+			tfoResources[i].DeletedBy = tfoResource.UUID
+		}
+		result = h.DB.Save(&tfoResources)
+		if result.Error != nil {
+			return "", fmt.Errorf("error saving tfo_resource_spec: %s", result.Error)
+		}
+
+		result = h.DB.Delete(&tfoResources)
+		if result.Error != nil {
+			return "", fmt.Errorf("error deleting tfo_resource_spec: %s", result.Error)
+		}
+	}
+
 	result = h.DB.Create(&tfoResourceSpec)
 	if result.Error != nil {
 		return "", fmt.Errorf("error saving tfo_resource_spec: %s", result.Error)
 	}
 
-	apiURL := getApiURL(c, h.serviceIP)
-	token := fetchToken(h.DB, *tfoResourceSpec, h.tenant, clusterName, apiURL)
+	apiURL := GetApiURL(c, h.serviceIP)
+	token := FetchToken(h.DB, *tfoResourceSpec, h.tenant, clusterName, apiURL)
 	appendClusterNameLabel(&jsonData.Terraform, cluster.Name)
 	addOriginEnvs(&jsonData.Terraform, h.tenant, clusterName, apiURL, token)
 
@@ -819,13 +927,18 @@ func (h APIHandler) updateResource(c *gin.Context) error {
 		return fmt.Errorf("error updating resource, generation '%s' is less than current generation '%s'", gen1, gen2)
 	}
 
-	result = h.DB.Save(&tfoResource)
+	if compare(gen1, ">", gen2) {
+		tfoResourceFromDatabase.CurrentState = models.Untracked
+		tfoResourceFromDatabase.CurrentGeneration = tfoResource.CurrentGeneration
+	}
+
+	result = h.DB.Save(&tfoResourceFromDatabase)
 	if result.Error != nil {
 		return result.Error
 	}
 
 	tfoResourceSpecFromDatabase := models.TFOResourceSpec{}
-	result = h.DB.Where("tfo_resource_uuid = ? AND generation = ?", tfoResource.UUID, tfoResource.CurrentGeneration).First(&tfoResourceSpecFromDatabase)
+	result = h.DB.Where("tfo_resource_uuid = ? AND generation = ?", tfoResourceFromDatabase.UUID, tfoResourceFromDatabase.CurrentGeneration).First(&tfoResourceSpecFromDatabase)
 	if result.Error != nil && errors.Is(result.Error, gorm.ErrRecordNotFound) {
 		result = h.DB.Create(&tfoResourceSpec)
 		if result.Error != nil {
@@ -836,8 +949,8 @@ func (h APIHandler) updateResource(c *gin.Context) error {
 		return fmt.Errorf("error occurred when looking for tfo_resource_spec: %v", result.Error)
 	}
 
-	apiURL := getApiURL(c, h.serviceIP)
-	token := fetchToken(h.DB, tfoResourceSpecFromDatabase, h.tenant, clusterName, apiURL)
+	apiURL := GetApiURL(c, h.serviceIP)
+	token := FetchToken(h.DB, tfoResourceSpecFromDatabase, h.tenant, clusterName, apiURL)
 	appendClusterNameLabel(&jsonData.Terraform, clusterName)
 	addOriginEnvs(&jsonData.Terraform, h.tenant, clusterName, apiURL, token)
 
@@ -849,7 +962,7 @@ func (h APIHandler) updateResource(c *gin.Context) error {
 	return nil
 }
 
-func fetchToken(db *gorm.DB, tfoResourceSpec models.TFOResourceSpec, tenant, clusterName, apiURL string) string {
+func FetchToken(db *gorm.DB, tfoResourceSpec models.TFOResourceSpec, tenant, clusterName, apiURL string) string {
 
 	generation := tfoResourceSpec.Generation
 	resourceUUID := tfoResourceSpec.TFOResourceUUID
@@ -872,7 +985,7 @@ func fetchToken(db *gorm.DB, tfoResourceSpec models.TFOResourceSpec, tenant, clu
 	return token
 }
 
-func getApiURL(c *gin.Context, serviceIP *string) string {
+func GetApiURL(c *gin.Context, serviceIP *string) string {
 	if serviceIP != nil {
 		if *serviceIP != "" {
 			scheme := "http"

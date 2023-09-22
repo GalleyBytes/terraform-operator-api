@@ -768,6 +768,7 @@ func (h APIHandler) addResource(c *gin.Context) (string, error) {
 
 	// TODO Allow using a different queue
 	h.Queue.PushBack(jsonData.Terraform)
+	log.Printf("Added %s/%s to the queue", jsonData.Terraform.Namespace, jsonData.Terraform.Name)
 
 	return "", nil
 }
@@ -843,8 +844,10 @@ func (h APIHandler) updateResource(c *gin.Context) error {
 	token := fetchToken(h.DB, tfoResourceSpecFromDatabase, h.tenant, clusterName, apiURL)
 	appendClusterNameLabel(&jsonData.Terraform, clusterName)
 	addOriginEnvs(&jsonData.Terraform, h.tenant, clusterName, apiURL, token)
+
 	// TODO Allow using a different queue
 	h.Queue.PushBack(jsonData.Terraform)
+	log.Printf("Added %s/%s to the queue", jsonData.Terraform.Namespace, jsonData.Terraform.Name)
 
 	return nil
 }

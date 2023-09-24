@@ -8,11 +8,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/galleybytes/terraform-operator-api/internal/qworker"
 	"github.com/galleybytes/terraform-operator-api/pkg/api"
 	"github.com/galleybytes/terraform-operator-api/pkg/common/db"
-	tfv1beta1 "github.com/galleybytes/terraform-operator/pkg/apis/tf/v1beta1"
-	"github.com/gammazero/deque"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 	"gorm.io/gorm"
@@ -86,10 +83,6 @@ func main() {
 		database = db.Init(dbURL)
 	}
 
-	queue := deque.Deque[tfv1beta1.Terraform]{}
-
-	qworker.BackgroundWorker(&queue)
-
 	ssoConfig, err := api.NewSAMLConfig(samlIssuer, samlRecipient, samlMetadataURL)
 	if err != nil {
 		log.Fatal(err)
@@ -104,7 +97,7 @@ func main() {
 		serviceIP = os.Getenv(fmt.Sprintf("%s_SERVICE_HOST", s))
 	}
 
-	apiHandler := api.NewAPIHandler(database, &queue, clientset, ssoConfig, &serviceIP)
+	apiHandler := api.NewAPIHandler(database, clientset, ssoConfig, &serviceIP)
 	apiHandler.RegisterRoutes()
 	apiHandler.Server.Run(port)
 }

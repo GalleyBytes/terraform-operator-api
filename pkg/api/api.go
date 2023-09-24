@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"net/http"
 
-	tfv1beta1 "github.com/galleybytes/terraform-operator/pkg/apis/tf/v1beta1"
-	"github.com/gammazero/deque"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 	"k8s.io/client-go/kubernetes"
@@ -15,7 +13,6 @@ import (
 type APIHandler struct {
 	Server    *gin.Engine
 	DB        *gorm.DB
-	Queue     *deque.Deque[tfv1beta1.Terraform]
 	clientset kubernetes.Interface
 	ssoConfig *SSOConfig
 	serviceIP *string
@@ -54,12 +51,11 @@ func NewSAMLConfig(issuer, recipient, metadataURL string) (*SSOConfig, error) {
 	}, nil
 }
 
-func NewAPIHandler(db *gorm.DB, queue *deque.Deque[tfv1beta1.Terraform], clientset kubernetes.Interface, ssoConfig *SSOConfig, serviceIP *string) *APIHandler {
+func NewAPIHandler(db *gorm.DB, clientset kubernetes.Interface, ssoConfig *SSOConfig, serviceIP *string) *APIHandler {
 
 	return &APIHandler{
 		Server:    gin.Default(),
 		DB:        db,
-		Queue:     queue,
 		clientset: clientset,
 		ssoConfig: ssoConfig,
 		serviceIP: serviceIP,

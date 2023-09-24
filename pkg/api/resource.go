@@ -29,6 +29,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	k8sjson "k8s.io/apimachinery/pkg/runtime/serializer/json"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -488,11 +489,6 @@ func (h APIHandler) ResourcePoll(c *gin.Context) {
 		c.JSON(http.StatusOK, response(http.StatusOK, fmt.Sprintf("The '%s' workflow has not completed.", tf.Name), nil))
 		return
 	}
-	if h.Queue.Len() > 0 {
-		// Wait for all queue to complete before opening up for polling
-		c.JSON(http.StatusOK, response(http.StatusOK, "Waiting for API to complete queue.", nil))
-		return
-	}
 
 	resourceList := corev1.List{}
 	resourceList.SetGroupVersionKind(schema.GroupVersionKind{
@@ -615,8 +611,6 @@ func (h APIHandler) syncDependencies(c *gin.Context) error {
 	if clusterID == 0 {
 		return fmt.Errorf("cluster_name '%s' not found", clusterName)
 	}
-
-	kedge.KubernetesConfig(os.Getenv("KUBECONFIG"))
 
 	jsonData := rawData{}
 	err := c.BindJSON(&jsonData)
@@ -766,9 +760,10 @@ func (h APIHandler) addResource(c *gin.Context) (string, error) {
 	appendClusterNameLabel(&jsonData.Terraform, cluster.Name)
 	addOriginEnvs(&jsonData.Terraform, h.tenant, clusterName, apiURL, token)
 
-	// TODO Allow using a different queue
-	h.Queue.PushBack(jsonData.Terraform)
-	log.Printf("Added %s/%s to the queue", jsonData.Terraform.Namespace, jsonData.Terraform.Name)
+	err = applyOnCreateOrUpdate(c, jsonData.Terraform, h.clientset, h.tenant)
+	if err != nil {
+		return "", err
+	}
 
 	return "", nil
 }
@@ -845,9 +840,10 @@ func (h APIHandler) updateResource(c *gin.Context) error {
 	appendClusterNameLabel(&jsonData.Terraform, clusterName)
 	addOriginEnvs(&jsonData.Terraform, h.tenant, clusterName, apiURL, token)
 
-	// TODO Allow using a different queue
-	h.Queue.PushBack(jsonData.Terraform)
-	log.Printf("Added %s/%s to the queue", jsonData.Terraform.Namespace, jsonData.Terraform.Name)
+	err = applyOnCreateOrUpdate(c, jsonData.Terraform, h.clientset, h.tenant)
+	if err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -984,4 +980,110 @@ func jsonify(o interface{}) (string, error) {
 		b = []byte("{}")
 	}
 	return string(b), nil
+}
+
+func applyOnCreateOrUpdate(ctx context.Context, tf tfv1beta1.Terraform, clientset kubernetes.Interface, _tenantID string) error {
+	// tenantID is totally broken right now. Just hardcode this for now
+	tenantID := "internal"
+
+	labelKey := "tfo-api.galleybytes.com/cluster-name"
+	clusterName := tf.Labels[labelKey]
+	if clusterName == "" {
+		// The terraform resource requires a cluster name in order to continue
+		log.Printf("'%s/%s' is missing the '%s' label. Skipping", tf.Namespace, tf.Name, labelKey)
+		// continue
+		return nil
+	}
+
+	config, err := getVclusterConfig(clientset, tenantID, clusterName)
+	if err != nil {
+		return fmt.Errorf("error occurred getting vcluster config for %s-%s %s/%s: %s", tenantID, clusterName, tf.Namespace, tf.Name, err)
+	}
+	vclusterClient := kubernetes.NewForConfigOrDie(config)
+	vclusterTFOClient := tfo.NewForConfigOrDie(config)
+
+	// Try and create the namespace for the tfResource. Acceptable error is if namespace already exists.
+	_, err = vclusterClient.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: tf.Namespace,
+		},
+	}, metav1.CreateOptions{})
+	if err != nil {
+		if !kerrors.IsAlreadyExists(err) {
+			return fmt.Errorf("namespace/%s could not be created in vcluster: %s", tf.Namespace, err)
+		}
+	}
+
+	// Get a list of resources in the vcluster to see if the resource already exists to determines whether to patch or create.
+	terraforms, err := vclusterTFOClient.TfV1beta1().Terraforms(tf.Namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("error occurred listing tf objects in vcluster: %s", err)
+	}
+	isNameExists := false
+	for _, terraform := range terraforms.Items {
+		if terraform.Name == tf.Name {
+			isNameExists = true
+			break
+		}
+	}
+
+	// Cleanup fields that shouldn't exist when creating or patching resources
+	tf.SetResourceVersion("")
+	tf.SetUID("")
+	tf.SetSelfLink("")
+	tf.SetGeneration(0)
+	tf.SetManagedFields(nil)
+	tf.SetCreationTimestamp(metav1.Time{})
+	if isNameExists {
+		// TODO Do JSONPatch which should catch the removal or changes of boolean fields that are being missed by patch
+		log.Printf("Patching %s-%s %s/%s", tenantID, clusterName, tf.Namespace, tf.Name)
+		err := doPatch(&tf, ctx, tf.Name, tf.Namespace, vclusterTFOClient)
+		if err != nil {
+			return fmt.Errorf("error occurred patching tf object: %v", err)
+			// continue
+		}
+		log.Printf("Successfully patched %s-%s %s/%s", tenantID, clusterName, tf.Namespace, tf.Name)
+		return nil
+	}
+
+	err = doCreate(tf, ctx, tf.Namespace, vclusterTFOClient)
+	log.Printf("Creating %s-%s %s/%s", tenantID, clusterName, tf.Namespace, tf.Name)
+	if err != nil {
+		return fmt.Errorf("error creating new tf resource: %v", err)
+	}
+	log.Printf("Successfully created %s-%s %s/%s", tenantID, clusterName, tf.Namespace, tf.Name)
+	return nil
+}
+
+func patchableTFResource(obj *tfv1beta1.Terraform) []byte {
+	gvks, _, err := scheme.Scheme.ObjectKinds(obj)
+	if err != nil || len(gvks) == 0 {
+		obj.SetGroupVersionKind(schema.GroupVersionKind{
+			Group:   tfv1beta1.SchemeGroupVersion.Group,
+			Version: tfv1beta1.SchemeGroupVersion.Version,
+			Kind:    "Terraform",
+		})
+	}
+
+	buf := bytes.NewBuffer([]byte{})
+	k8sjson.NewSerializer(k8sjson.DefaultMetaFactory, runtime.NewScheme(), runtime.NewScheme(), true).Encode(obj, buf)
+	return buf.Bytes()
+}
+
+func doCreate(new tfv1beta1.Terraform, ctx context.Context, namespace string, client tfo.Interface) error {
+	_, err := client.TfV1beta1().Terraforms(namespace).Create(ctx, &new, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("an error occurred saving tf object: %v", err)
+	}
+	return nil
+}
+
+func doPatch(tf *tfv1beta1.Terraform, ctx context.Context, name, namespace string, client tfo.Interface) error {
+	_, err := client.TfV1beta1().Terraforms(namespace).Patch(ctx, name, types.MergePatchType, patchableTFResource(tf), metav1.PatchOptions{
+		FieldManager: name,
+	})
+	if err != nil {
+		return err
+	}
+	return nil
 }

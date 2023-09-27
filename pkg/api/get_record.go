@@ -654,6 +654,13 @@ func (h APIHandler) Debugger(c *gin.Context) {
 		return
 	}
 
+	cmd := []string{}
+	for key, values := range c.Request.URL.Query() {
+		if key == "command" {
+			cmd = values
+		}
+	}
+
 	var wsupgrader = websocket.Upgrader{
 		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,
@@ -668,7 +675,7 @@ func (h APIHandler) Debugger(c *gin.Context) {
 	}
 	defer conn.Close()
 
-	podExecReadWriter, err := New(h.clientset, clusterName, namespace, name, c)
+	podExecReadWriter, err := New(h.clientset, clusterName, namespace, name, c, cmd)
 	if err != nil {
 		log.Printf("Failed to connect to debug pod: %s", err)
 		return
@@ -797,7 +804,7 @@ func (t TermSizer) Next() *remotecommand.TerminalSize {
 // }
 
 // command string, argv []string, headers map[string][]string, options ...Option
-func New(clientset kubernetes.Interface, clusterName, namespace, name string, c *gin.Context) (*PodExec, error) {
+func New(clientset kubernetes.Interface, clusterName, namespace, name string, c *gin.Context, cmd []string) (*PodExec, error) {
 	pty, tty, err := ptylib.Open()
 	if err != nil {
 		log.Fatal(err)
@@ -815,7 +822,7 @@ func New(clientset kubernetes.Interface, clusterName, namespace, name string, c 
 
 	go func() {
 		defer pty.Close()
-		err := RemoteDebug(clientset, clusterName, namespace, name, tty, c, termSizer)
+		err := RemoteDebug(clientset, clusterName, namespace, name, tty, c, termSizer, cmd)
 		log.Println("Pod exec exited")
 		closeCh <- err
 	}()
@@ -866,7 +873,7 @@ func (p *PodExec) Close() error {
 
 // RemoteDebug starts the debug pod and connects in a tty that will be synced thru a websocket. Anything written to
 // stdout will be synced to the tty. stderr logs will show up in the api logs and not the tty.
-func RemoteDebug(parentClientset kubernetes.Interface, clusterName, namespace, name string, tty *os.File, c *gin.Context, terminalSizeQueue remotecommand.TerminalSizeQueue) error {
+func RemoteDebug(parentClientset kubernetes.Interface, clusterName, namespace, name string, tty *os.File, c *gin.Context, terminalSizeQueue remotecommand.TerminalSizeQueue, cmd []string) error {
 
 	config, err := getVclusterConfig(parentClientset, "internal", clusterName)
 	if err != nil {
@@ -937,6 +944,22 @@ func RemoteDebug(parentClientset kubernetes.Interface, clusterName, namespace, n
 	}
 	// log.Println(file.Name())
 	// log.Println("Setting up request")
+	execCommand := []string{
+		"/bin/bash",
+		"-c",
+		`cd $TFO_MAIN_MODULE && \
+			export PS1="\\w\\$ " && \
+			if [[ -n "$AWS_WEB_IDENTITY_TOKEN_FILE" ]]; then
+				export $(irsa-tokengen);
+				echo printf "\nAWS creds set from token file\n"
+			fi && \
+			printf "\nTry running 'terraform init'\n\n" && bash
+		`,
+	}
+
+	if len(cmd) > 0 {
+		execCommand = cmd
+	}
 
 	fn := func() error {
 		req := clientset.CoreV1().RESTClient().
@@ -947,15 +970,7 @@ func RemoteDebug(parentClientset kubernetes.Interface, clusterName, namespace, n
 			SubResource("exec").
 			VersionedParams(&corev1.PodExecOptions{
 				Container: pod.Spec.Containers[0].Name,
-				Command: []string{
-					"/bin/bash",
-					"-c",
-					"cd $TFO_MAIN_MODULE && export PS1=\"\\w\\$ \" && " +
-						"if [[ -n \"$AWS_WEB_IDENTITY_TOKEN_FILE\" ]];then " +
-						"export $(irsa-tokengen); " +
-						"echo printf \"\nAWS creds set from token file\n\";fi &&" +
-						"printf \"\nTry running 'terraform init'\n\n\" && bash",
-				},
+				Command:   execCommand,
 				// Stdin:  streamOptions.Stdin,
 				// Stdout: streamOptions.Out != nil,
 				// Stderr: streamOptions.ErrOut != nil,

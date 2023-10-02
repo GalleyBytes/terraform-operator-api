@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/galleybytes/terraform-operator-api/pkg/common/models"
@@ -874,14 +875,24 @@ func fetchToken(db *gorm.DB, tfoResourceSpec models.TFOResourceSpec, tenant, clu
 func getApiURL(c *gin.Context, serviceIP *string) string {
 	if serviceIP != nil {
 		if *serviceIP != "" {
-			return fmt.Sprintf("http://%s", *serviceIP)
+			scheme := "http"
+			apiHost := *serviceIP
+			is443 := strings.HasSuffix(*serviceIP, ":443")
+			if is443 {
+				scheme = "https"
+			}
+			return fmt.Sprintf("%s://%s", scheme, apiHost)
 		}
 	}
 
 	scheme := "http" // default for the gin `Run` function
 	apiHost := c.Request.Host
+	is443 := strings.HasSuffix(apiHost, ":443")
 	xForwarededHost := c.Request.Header.Get("x-forwarded-host")
 	xForwardedScheme := c.Request.Header.Get("x-forwarded-scheme")
+	if is443 {
+		scheme = "https"
+	}
 	if xForwarededHost != "" {
 		apiHost = xForwarededHost
 	}

@@ -95,6 +95,10 @@ func main() {
 	if useServiceHost {
 		s := strings.ReplaceAll(strings.ToUpper(serviceName), "-", "_")
 		serviceIP = os.Getenv(fmt.Sprintf("%s_SERVICE_HOST", s))
+		servicePort := os.Getenv(fmt.Sprintf("%s_SERVICE_PORT", s))
+		if servicePort != "" {
+			serviceIP += ":" + servicePort
+		}
 	}
 
 	apiHandler := api.NewAPIHandler(database, clientset, ssoConfig, &serviceIP)

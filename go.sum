@@ -113,6 +113,8 @@ github.com/fvbommel/sortorder v1.0.1 h1:dSnXLt4mJYH25uDDGa3biZNQsozaUWDSWeKJ0qqF
 github.com/fvbommel/sortorder v1.0.1/go.mod h1:uk88iVf1ovNn1iLfgUVU2F9o5eO30ui720w+kxuqRs0=
 github.com/galleybytes/terraform-operator v0.12.1 h1:sqLZtnxlNgIl0psnBjnjwQ676P+q2NIhcoUfuGcHyYY=
 github.com/galleybytes/terraform-operator v0.12.1/go.mod h1:UBmC5dPK2dBA09AjLNW4szw5VqQ8mndXrR8Gp97GRtE=
+github.com/galleybytes/terraform-operator v0.14.0 h1:fmknK+CyaG12Oz0wE0Oq72zpnRkzx0zMwcLCF/am0Vs=
+github.com/galleybytes/terraform-operator v0.14.0/go.mod h1:UBmC5dPK2dBA09AjLNW4szw5VqQ8mndXrR8Gp97GRtE=
 github.com/gammazero/deque v0.2.1 h1:qSdsbG6pgp6nL7A0+K/B7s12mcCY/5l5SIUpMOl+dC0=
 github.com/gammazero/deque v0.2.1/go.mod h1:LFroj8x4cMYCukHJDbxFCkT+r9AndaJnFMuZDV34tuU=
 github.com/ghodss/yaml v1.0.0 h1:wQHKEahhL6wmXdzwWG11gIVCkOv05bNOh+Rxn0yngAk=

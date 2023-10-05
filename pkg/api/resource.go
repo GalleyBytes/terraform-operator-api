@@ -25,12 +25,12 @@ import (
 	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	kerrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	k8sjson "k8s.io/apimachinery/pkg/runtime/serializer/json"
-	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
@@ -1025,30 +1025,82 @@ func applyOnCreateOrUpdate(ctx context.Context, tf tfv1beta1.Terraform, clientse
 		}
 	}
 
-	// Get a list of resources in the vcluster to see if the resource already exists to determines whether to patch or create.
-	terraforms, err := vclusterTFOClient.TfV1beta1().Terraforms(tf.Namespace).List(ctx, metav1.ListOptions{})
-	if err != nil {
-		return fmt.Errorf("error occurred listing tf objects in vcluster: %s", err)
-	}
-	isNameExists := false
-	for _, terraform := range terraforms.Items {
-		if terraform.Name == tf.Name {
-			isNameExists = true
-			break
-		}
-	}
-
-	// Cleanup fields that shouldn't exist when creating or patching resources
+	// Cleanup fields that shouldn't exist when creating resources
 	tf.SetResourceVersion("")
 	tf.SetUID("")
 	tf.SetSelfLink("")
 	tf.SetGeneration(0)
 	tf.SetManagedFields(nil)
 	tf.SetCreationTimestamp(metav1.Time{})
-	if isNameExists {
-		// TODO Do JSONPatch which should catch the removal or changes of boolean fields that are being missed by patch
+
+	// Get a list of resources in the vcluster to see if the resource already exists to determines whether to patch or create.
+	terraforms, err := vclusterTFOClient.TfV1beta1().Terraforms(tf.Namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return fmt.Errorf("error occurred listing tf objects in vcluster: %s", err)
+	}
+	isPatch := false // True when terraform resource exists
+	for _, terraform := range terraforms.Items {
+		if terraform.Name == tf.Name {
+			tf.SetManagedFields(terraform.GetManagedFields())
+			tf.SetOwnerReferences(terraform.GetOwnerReferences())
+			tf.SetDeletionGracePeriodSeconds(terraform.GetDeletionGracePeriodSeconds())
+			tf.SetDeletionTimestamp(terraform.GetDeletionTimestamp())
+			tf.SetFinalizers(terraform.GetFinalizers())
+			tf.SetGenerateName(terraform.GetGenerateName())
+			tf.SetResourceVersion(terraform.GetResourceVersion())
+			tf.SetUID(terraform.GetUID())
+			tf.SetSelfLink(terraform.GetSelfLink())
+			tf.SetGeneration(terraform.GetGeneration())
+			tf.SetManagedFields(terraform.GetManagedFields())
+			tf.SetCreationTimestamp(terraform.GetCreationTimestamp())
+			tf.Status = terraform.Status
+			isPatch = true
+			break
+		}
+	}
+
+	fswatchImageConfig := tfv1beta1.ImageConfig{
+		Image:           "ghcr.io/galleybytes/fswatch:0.10.2",
+		ImagePullPolicy: corev1.PullIfNotPresent,
+	}
+	for _, taskName := range []tfv1beta1.TaskName{
+		tfv1beta1.RunSetup,
+		tfv1beta1.RunPreInit,
+		tfv1beta1.RunInit,
+		tfv1beta1.RunPostInit,
+		tfv1beta1.RunPrePlan,
+		tfv1beta1.RunPlan,
+		tfv1beta1.RunPostPlan,
+		tfv1beta1.RunPreApply,
+		tfv1beta1.RunApply,
+		tfv1beta1.RunPostApply,
+		tfv1beta1.RunSetupDelete,
+		tfv1beta1.RunPreInitDelete,
+		tfv1beta1.RunInitDelete,
+		tfv1beta1.RunPostInitDelete,
+		tfv1beta1.RunPrePlanDelete,
+		tfv1beta1.RunPlanDelete,
+		tfv1beta1.RunPostPlanDelete,
+		tfv1beta1.RunPreApplyDelete,
+		tfv1beta1.RunApplyDelete,
+		tfv1beta1.RunPostApplyDelete} {
+		addSidecar(&tf, taskName+"-fswatch", fswatchImageConfig, taskName, nil)
+	}
+
+	addTaskOption(&tf, tfv1beta1.TaskOption{
+		For: []tfv1beta1.TaskName{"*"},
+		PolicyRules: []rbacv1.PolicyRule{
+			{
+				Verbs:     []string{"get"},
+				Resources: []string{"pods"},
+				APIGroups: []string{""},
+			},
+		},
+	})
+
+	if isPatch {
 		log.Printf("Patching %s-%s %s/%s", tenantID, clusterName, tf.Namespace, tf.Name)
-		err := doPatch(&tf, ctx, tf.Name, tf.Namespace, vclusterTFOClient)
+		err = doPatch(&tf, ctx, tf.Name, tf.Namespace, vclusterTFOClient)
 		if err != nil {
 			return fmt.Errorf("error occurred patching tf object: %v", err)
 			// continue
@@ -1064,6 +1116,32 @@ func applyOnCreateOrUpdate(ctx context.Context, tf tfv1beta1.Terraform, clientse
 	}
 	log.Printf("Successfully created %s-%s %s/%s", tenantID, clusterName, tf.Namespace, tf.Name)
 	return nil
+}
+
+func addSidecar(tf *tfv1beta1.Terraform, name tfv1beta1.TaskName, imageConfig tfv1beta1.ImageConfig, task tfv1beta1.TaskName, taskOption *tfv1beta1.TaskOption) {
+	if tf.Spec.Plugins == nil {
+		tf.Spec.Plugins = make(map[tfv1beta1.TaskName]tfv1beta1.Plugin)
+	}
+	for key := range tf.Spec.Plugins {
+		if key == name {
+			return // do not add duplicates
+		}
+	}
+
+	tf.Spec.Plugins[name] = tfv1beta1.Plugin{
+		ImageConfig: imageConfig,
+		When:        "Sidecar",
+		Task:        task,
+		Must:        true,
+	}
+
+	if taskOption != nil {
+		tf.Spec.TaskOptions = append(tf.Spec.TaskOptions, *taskOption)
+	}
+}
+
+func addTaskOption(tf *tfv1beta1.Terraform, taskOption tfv1beta1.TaskOption) {
+	tf.Spec.TaskOptions = append(tf.Spec.TaskOptions, taskOption)
 }
 
 func patchableTFResource(obj *tfv1beta1.Terraform) []byte {
@@ -1090,11 +1168,10 @@ func doCreate(new tfv1beta1.Terraform, ctx context.Context, namespace string, cl
 }
 
 func doPatch(tf *tfv1beta1.Terraform, ctx context.Context, name, namespace string, client tfo.Interface) error {
-	_, err := client.TfV1beta1().Terraforms(namespace).Patch(ctx, name, types.MergePatchType, patchableTFResource(tf), metav1.PatchOptions{
-		FieldManager: name,
-	})
+	_, err := client.TfV1beta1().Terraforms(namespace).Update(ctx, tf, metav1.UpdateOptions{})
 	if err != nil {
 		return err
 	}
+
 	return nil
 }

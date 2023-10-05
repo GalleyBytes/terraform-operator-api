@@ -92,7 +92,7 @@ func saveTaskLog(db *gorm.DB, taskUUID, content string) error {
 
 	if taskLog.Size != uint64(len([]byte(content))) {
 		if taskLog.Size > uint64(len([]byte(content))) {
-			return fmt.Errorf("sent log's size was smaller than previously version")
+			return fmt.Errorf("sent log's size was smaller than earlier recorded log")
 		}
 		// The content has been updated. Read the bytes after what has already been written to preserve the
 		// original content. We don't want to allow logs in the database to be changed once they are written.

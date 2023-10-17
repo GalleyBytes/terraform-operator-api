@@ -39,6 +39,20 @@ import (
 //go:embed manifests/vcluster.tpl.yaml
 var defaultVirtualClusterManifestTemplate string
 
+// Log order:
+var taskTypesInOrder = []string{
+	"setup",
+	"preinit",
+	"init",
+	"postinit",
+	"preplan",
+	"plan",
+	"postplan",
+	"preapply",
+	"apply",
+	"postapply",
+}
+
 type rawData map[string][]byte
 
 type resource struct {
@@ -547,6 +561,273 @@ func IsWorkflowRunning(status tfv1beta1.TerraformStatus) bool {
 	}
 }
 
+// Given some human readable data, getWorkflowInfo queries the database and aggregates data relevant
+// at the moment of querying. Queries span multiple tables over a few lookups.
+// As the function progresses, more data is added to the response. In between lookups, if no data is found
+// for a particular query, return all data that has been previously gathered.
+func (h APIHandler) getWorkflowInfo(c *gin.Context) {
+	name := c.Param("name")
+	namespace := c.Param("namespace")
+	clusterName := c.Param("cluster_name")
+	generation := c.Param("generation")
+	clusterID := h.getClusterID(clusterName)
+	if clusterID == 0 {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("cluster_name '%s' not found", clusterName), nil))
+		return
+	}
+
+	var tfoResourcesData []struct {
+		Name              string `json:"name"`
+		Namespace         string `json:"namespace"`
+		ClusterName       string `json:"cluster_name"`
+		CurrentState      string `json:"state"`
+		UUID              string `json:"uuid"`
+		CurrentGeneration string `json:"current_generation"`
+	}
+	var tfoResourceSpecsData []struct {
+		ResourceSpec string `json:"resource_spec"`
+		Annotations  string `json:"annotations"`
+		Labels       string `json:"labels"`
+	}
+	type task struct {
+		UUID                string `json:"uuid"`
+		TaskType            string `json:"task_type"`
+		Rerun               int    `json:"rerun"`
+		InClusterGeneration string `json:"in_cluster_generation"`
+	}
+	var tasks []task
+	var approvals []struct {
+		IsApproved  bool   `json:"is_approved"`
+		TaskPodUUID string `json:"task_pod_uuid"`
+	}
+
+	type ResponseItem struct {
+		Name              string `json:"name"`
+		Namespace         string `json:"namespace"`
+		ClusterName       string `json:"cluster_name"`
+		CurrentState      string `json:"state"`
+		UUID              string `json:"uuid"`
+		QueryGeneration   string `json:"query_generation"`
+		CurrentGeneration string `json:"current_generation"`
+		ResourceSpec      string `json:"resource_spec"`
+		Annotations       string `json:"annotations"`
+		Labels            string `json:"labels"`
+
+		Tasks      []task `json:"tasks"`
+		IsApproved *bool  `json:"is_approved"`
+	}
+	finalResult := [1]ResponseItem{}
+
+	queryResult := workflow(h.DB, clusterID, namespace, name).Scan(&tfoResourcesData)
+	if queryResult.Error != nil {
+		c.JSON(http.StatusNotFound, response(http.StatusNotFound, queryResult.Error.Error(), []any{}))
+		return
+	}
+	if len(tfoResourcesData) == 0 {
+		c.JSON(http.StatusOK, response(http.StatusOK, "Resource not found", []any{}))
+		return
+	}
+
+	resourceUUID := tfoResourcesData[0].UUID
+	if generation == "latest" {
+		generation = tfoResourcesData[0].CurrentGeneration
+	}
+
+	finalResult[0].Name = tfoResourcesData[0].Name
+	finalResult[0].Namespace = tfoResourcesData[0].Namespace
+	finalResult[0].CurrentState = tfoResourcesData[0].CurrentState
+	finalResult[0].ClusterName = tfoResourcesData[0].ClusterName
+	finalResult[0].CurrentGeneration = tfoResourcesData[0].CurrentGeneration
+	finalResult[0].QueryGeneration = generation
+	finalResult[0].UUID = resourceUUID
+
+	queryResult = resourceSpec(h.DB, resourceUUID, generation).Scan(&tfoResourceSpecsData)
+	if queryResult.Error != nil {
+		c.JSON(http.StatusNotFound, response(http.StatusNotFound, queryResult.Error.Error(), []any{}))
+		return
+	}
+	if len(tfoResourceSpecsData) == 0 {
+		c.JSON(http.StatusOK, response(http.StatusOK, "resource spec not found", finalResult))
+		return
+	}
+
+	finalResult[0].ResourceSpec = tfoResourceSpecsData[0].ResourceSpec
+	finalResult[0].Annotations = tfoResourceSpecsData[0].Annotations
+	finalResult[0].Labels = tfoResourceSpecsData[0].Labels
+
+	queryResult = allTasksGeneratedForResource(h.DB, resourceUUID, generation).Scan(&tasks)
+	if queryResult.Error != nil {
+		c.JSON(http.StatusNotFound, response(http.StatusNotFound, queryResult.Error.Error(), []any{}))
+		return
+	}
+	if len(tasks) == 0 {
+		c.JSON(http.StatusOK, response(http.StatusOK, "tasks not found", finalResult))
+		return
+	}
+
+	taskMap := map[string][]task{}
+	for _, item := range tasks {
+		if taskMap[item.TaskType] == nil {
+			taskMap[item.TaskType] = []task{item}
+		} else {
+			taskMap[item.TaskType] = append(taskMap[item.TaskType], item)
+		}
+	}
+
+	filteredData := []task{}
+	currentHightestRerun := 0
+	for _, taskType := range taskTypesInOrder {
+		if tasks, found := taskMap[taskType]; found {
+			indexOfHightestRerun := 0
+			for idx, task := range tasks {
+				if task.Rerun >= currentHightestRerun {
+					currentHightestRerun = task.Rerun
+					indexOfHightestRerun = idx
+				}
+			}
+			filteredData = append(filteredData, tasks[indexOfHightestRerun])
+		}
+	}
+
+	finalResult[0].Tasks = filteredData
+
+	queryResult = approvalStatusBasedOnLastestRerunOfResource(h.DB, resourceUUID, generation).Scan(&approvals)
+	if queryResult.Error != nil {
+		c.JSON(http.StatusNotFound, response(http.StatusNotFound, queryResult.Error.Error(), []any{}))
+		return
+	}
+	if len(approvals) == 0 {
+		finalResult[0].IsApproved = nil
+		c.JSON(http.StatusOK, response(http.StatusOK, "", finalResult))
+		return
+	}
+
+	finalResult[0].IsApproved = &approvals[0].IsApproved
+	c.JSON(http.StatusOK, response(http.StatusOK, "responseMsg", finalResult))
+}
+
+func (h APIHandler) getAllTasksGeneratedForResource(c *gin.Context) {
+	resourceUUID := c.Param("tfo_resource_uuid")
+	generation := c.Param("generation")
+
+	var result []struct {
+		UUID                string `json:"uuid"`
+		TaskType            string `json:"task_type"`
+		Rerun               int    `json:"rerun"`
+		InClusterGeneration string `json:"in_cluster_generation"`
+	}
+
+	allTasksGeneratedForResource(h.DB, resourceUUID, generation).Scan(&result)
+	c.JSON(http.StatusOK, response(http.StatusOK, "", result))
+}
+
+func Reverse[T any](input []T) []T {
+	inputLen := len(input)
+	output := make([]T, inputLen)
+
+	for i, n := range input {
+		j := inputLen - i - 1
+
+		output[j] = n
+	}
+
+	return output
+}
+
+// Runs the same query as getAllTasksGeneratedForResource but filters tasks based on rerun
+func (h APIHandler) getHighestRerunOfTasksGeneratedForResource(c *gin.Context) {
+	resourceUUID := c.Param("tfo_resource_uuid")
+	generation := c.Param("generation")
+
+	type data struct {
+		UUID                string `json:"uuid"`
+		TaskType            string `json:"task_type"`
+		Rerun               int    `json:"rerun"`
+		InClusterGeneration string `json:"in_cluster_generation"`
+	}
+
+	var result []data
+
+	allTasksGeneratedForResource(h.DB, resourceUUID, generation).Scan(&result)
+
+	taskMap := map[string][]data{}
+	for _, item := range result {
+		if taskMap[item.TaskType] == nil {
+			taskMap[item.TaskType] = []data{item}
+		} else {
+			taskMap[item.TaskType] = append(taskMap[item.TaskType], item)
+		}
+	}
+
+	filteredData := []data{}
+	currentHightestRerun := 0
+	for _, taskType := range taskTypesInOrder {
+		if tasks, found := taskMap[taskType]; found {
+			indexOfHightestRerun := 0
+			for idx, task := range tasks {
+				if task.Rerun >= currentHightestRerun {
+					currentHightestRerun = task.Rerun
+					indexOfHightestRerun = idx
+				}
+			}
+			filteredData = append(filteredData, tasks[indexOfHightestRerun])
+		}
+	}
+
+	c.JSON(http.StatusOK, response(http.StatusOK, "", filteredData))
+}
+
+func (h APIHandler) getApprovalStatusForResource(c *gin.Context) {
+	resourceUUID := c.Param("tfo_resource_uuid")
+	generation := c.Param("generation")
+
+	var data []struct {
+		IsApproved  bool   `json:"is_approved"`
+		TaskPodUUID string `json:"task_pod_uuid"`
+	}
+
+	queryResult := approvalStatusBasedOnLastestRerunOfResource(h.DB, resourceUUID, generation).Scan(&data)
+	if queryResult.Error != nil {
+		c.JSON(http.StatusNotFound, response(http.StatusNotFound, queryResult.Error.Error(), []any{}))
+		return
+	}
+
+	if data == nil {
+		c.JSON(http.StatusOK, response(http.StatusOK, "", []any{}))
+		return
+	}
+	c.JSON(http.StatusOK, response(http.StatusOK, "", data))
+
+}
+
+func (h APIHandler) getWorkflowResourceConfiguration(c *gin.Context) {
+	resurceUUID := c.Param("tfo_resource_uuid")
+	generation := c.Param("generation")
+
+	var result []struct {
+		ResourceSpec string `json:"resource_spec"`
+		Annotations  string `json:"annotations"`
+		Labels       string `json:"labels"`
+	}
+
+	resourceSpec(h.DB, resurceUUID, generation).Scan(&result)
+	c.JSON(http.StatusOK, response(http.StatusOK, "", result))
+
+}
+
+func (h APIHandler) getWorkflowApprovalStatus(c *gin.Context) {
+	taskUUID := c.Param("uuid")
+
+	var result []struct {
+		IsApproved bool
+	}
+
+	approvalQuery(h.DB, taskUUID).Scan(&result)
+
+	c.JSON(http.StatusOK, response(http.StatusOK, "", result))
+
+}
+
 // ResourcePoll is a short poll that checks and returns resources created from the tf resource's workflow
 // that have the correct label and annotation value.
 func (h APIHandler) ResourcePoll(c *gin.Context) {
@@ -839,24 +1120,9 @@ func (h APIHandler) addResource(c *gin.Context) (string, error) {
 		return "", fmt.Errorf("error saving tfo_resource: %s", result.Error)
 	}
 
-	// A tfo resource has a namespace and a name, which are used to identify it uniquely within the cluster.
-	// Upon the successful creation of a new tfoResource, any previous tfoResources matching the
-	// clusterID/namespace/name must be "deleted" by adding a "deleted_at" timestamp.
-	var tfoResources []models.TFOResource
-	result = h.DB.Where("name = ? AND namespace = ? AND cluster_id = ?", tfoResource.Name, tfoResource.Namespace, tfoResource.ClusterID).Order("created_at desc").Offset(1).Find(&tfoResources)
-	if result.Error == nil {
-		for i, _ := range tfoResources {
-			tfoResources[i].DeletedBy = tfoResource.UUID
-		}
-		result = h.DB.Save(&tfoResources)
-		if result.Error != nil {
-			return "", fmt.Errorf("error saving tfo_resource_spec: %s", result.Error)
-		}
-
-		result = h.DB.Delete(&tfoResources)
-		if result.Error != nil {
-			return "", fmt.Errorf("error deleting tfo_resource_spec: %s", result.Error)
-		}
+	err = deleteTFOResourcesExceptNewest(h.DB, tfoResource)
+	if err != nil {
+		return "", err
 	}
 
 	result = h.DB.Create(&tfoResourceSpec)
@@ -937,6 +1203,11 @@ func (h APIHandler) updateResource(c *gin.Context) error {
 		return result.Error
 	}
 
+	err = deleteTFOResourcesExceptNewest(h.DB, &tfoResourceFromDatabase)
+	if err != nil {
+		return err
+	}
+
 	tfoResourceSpecFromDatabase := models.TFOResourceSpec{}
 	result = h.DB.Where("tfo_resource_uuid = ? AND generation = ?", tfoResourceFromDatabase.UUID, tfoResourceFromDatabase.CurrentGeneration).First(&tfoResourceSpecFromDatabase)
 	if result.Error != nil && errors.Is(result.Error, gorm.ErrRecordNotFound) {
@@ -959,6 +1230,33 @@ func (h APIHandler) updateResource(c *gin.Context) error {
 		return err
 	}
 
+	return nil
+}
+
+// Soft deletes tfo_resources from the database except the latest one via created_at timestamp
+func deleteTFOResourcesExceptNewest(db *gorm.DB, tfoResource *models.TFOResource) error {
+	// A tfo resource has a namespace and a name, which are used to identify it uniquely within the cluster.
+	// Upon the successful creation of a new tfoResource, any previous tfoResources matching the
+	// clusterID/namespace/name must be "deleted" by adding a "deleted_at" timestamp.
+	var tfoResources []models.TFOResource
+	result := db.Where("name = ? AND namespace = ? AND cluster_id = ?", tfoResource.Name, tfoResource.Namespace, tfoResource.ClusterID).Order("created_at desc").Offset(1).Find(&tfoResources)
+	if result.Error == nil {
+		for i, _ := range tfoResources {
+			tfoResources[i].DeletedBy = tfoResource.UUID
+		}
+		if len(tfoResources) > 0 {
+			result = db.Save(&tfoResources)
+			if result.Error != nil {
+				return fmt.Errorf("error writing to tfo_resources: %s", result.Error)
+			}
+
+			result = db.Delete(&tfoResources)
+			if result.Error != nil {
+				return fmt.Errorf("error (soft) deleting tfo_resources: %s", result.Error)
+			}
+		}
+
+	}
 	return nil
 }
 

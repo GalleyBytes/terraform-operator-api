@@ -12,6 +12,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"strconv"
 	"time"
 
 	ptylib "github.com/creack/pty"
@@ -103,6 +104,34 @@ func (h APIHandler) GetCluster(c *gin.Context) {
 func (h APIHandler) Index(c *gin.Context) {
 	// TODO return api discovery data
 	c.JSON(http.StatusNoContent, nil)
+}
+
+func (h APIHandler) workflows(c *gin.Context) {
+
+	offset, _ := c.GetQuery("offset")
+	limit, _ := c.GetQuery("limit")
+	n, _ := strconv.Atoi(offset)
+	l, _ := strconv.Atoi(limit)
+
+	if l == 0 {
+		l = 10
+	}
+
+	var result []struct {
+		Name              string `json:"name"`
+		Namespace         string `json:"namespace"`
+		ClusterName       string `json:"cluster_name"`
+		CurrentState      string `json:"state"`
+		UUID              string `json:"uuid"`
+		CurrentGeneration string `json:"current_generation"`
+	}
+
+	workflows(h.DB).
+		Limit(l).
+		Offset(n).
+		Scan(&result)
+
+	c.JSON(http.StatusOK, response(http.StatusOK, "", result))
 }
 
 func (h APIHandler) ListClusters(c *gin.Context) {
@@ -245,20 +274,6 @@ func (h APIHandler) ResourceLogs(generationFilter, rerunFilter, taskTypeFilter, 
 	// Create this in order to store the logs filtered by the rerun sort
 	// filteredResuilts := []models.TFOTaskLog{}
 
-	// Log order:
-	taskTypesInOrder := []string{
-		"setup",
-		"preinit",
-		"init",
-		"postinit",
-		"preplan",
-		"plan",
-		"postplan",
-		"preapply",
-		"apply",
-		"postapply",
-	}
-
 	taskPodsOfHighestRerun := []models.TaskPod{}
 	currentRerun := float64(0)
 	for _, taskType := range taskTypesInOrder {
@@ -335,17 +350,17 @@ type GetResourceSpecResponseData struct {
 	models.TFOResourceSpec `json:",inline"`
 }
 
-func (h APIHandler) GetResourceSpec(c *gin.Context) {
-	uuid := c.Param("tfo_resource_uuid")
-	generation := c.Param("generation")
-	tfoResourceSpec := h.LookupResourceSpec(generation, uuid)
+// func (h APIHandler) GetResourceSpec(c *gin.Context) {
+// 	uuid := c.Param("tfo_resource_uuid")
+// 	generation := c.Param("generation")
+// 	tfoResourceSpec := h.LookupResourceSpec(generation, uuid)
 
-	responseData := []interface{}{}
-	if tfoResourceSpec != nil {
-		responseData = append(responseData, GetResourceSpecResponseData{TFOResourceSpec: *tfoResourceSpec})
-	}
-	c.JSON(http.StatusOK, &responseData)
-}
+// 	responseData := []interface{}{}
+// 	if tfoResourceSpec != nil {
+// 		responseData = append(responseData, GetResourceSpecResponseData{TFOResourceSpec: *tfoResourceSpec})
+// 	}
+// 	c.JSON(http.StatusOK, &responseData)
+// }
 
 type GetApprovalStatusResponseData struct {
 	TFOResourceUUID string `json:"tfo_resource_uuid"`
@@ -399,22 +414,18 @@ func (h APIHandler) GetApprovalStatusViaTaskPodUUID(c *gin.Context) {
 		c.JSON(http.StatusOK, response(http.StatusOK, "Approval "+result.Error.Error(), []approvalResponse{
 			{
 				Status: "nodata",
-				// Approval: models.Approval{
-				// 	TaskPodUUID: taskPodUUID,
-				// },
+				Approval: models.Approval{
+					TaskPodUUID: taskPodUUID,
+				},
 			},
 		}))
 		return
 	}
-	var status string = "nodata"
-	if approvals[0].IsApproved {
-		status = "approved"
-	} else {
-		status = "canceled"
-	}
+
 	c.JSON(http.StatusOK, response(http.StatusOK, "", []approvalResponse{
 		{
-			Status: status,
+			Approval: approvals[0],
+			Status:   "complete",
 		},
 	}))
 }

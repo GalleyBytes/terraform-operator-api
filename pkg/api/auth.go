@@ -287,3 +287,20 @@ func taskJWTClaims(token *jwt.Token) map[string]string {
 
 	return claimsMap
 }
+
+func (h APIHandler) corsOK(c *gin.Context) {
+	if c.Request.Method == http.MethodOptions {
+		c.Status(http.StatusOK)
+		c.Header("Access-Control-Allow-Origin", "*")
+		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE")
+		c.Header("Access-Control-Allow-Headers", "*")
+		c.Header("Access-Control-Max-Age", "86400")
+		c.AbortWithStatus(http.StatusOK)
+	} else {
+		c.Header("Access-Control-Allow-Origin", "*")
+		c.Header("Access-Control-Allow-Headers", "*")
+		c.Header("Access-Control-Max-Age", "86400")
+		c.Header("Access-Control-Allow-Methods", c.Request.Method)
+		c.Next()
+	}
+}

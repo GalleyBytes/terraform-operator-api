@@ -63,6 +63,7 @@ func NewAPIHandler(db *gorm.DB, clientset kubernetes.Interface, ssoConfig *SSOCo
 }
 
 func (h APIHandler) RegisterRoutes() {
+	h.Server.Use(h.corsOK)
 	preauth := h.Server.Group("/")
 	preauth.GET("/noauthtest", func(c *gin.Context) {
 		c.JSON(200, response(200, "", []string{"Please come again!"}))
@@ -85,6 +86,7 @@ func (h APIHandler) RegisterRoutes() {
 	authenticatedAPIV1 := h.Server.Group("/api/v1/")
 	authenticatedAPIV1.Use(validateJwt)
 	authenticatedAPIV1.GET("/", h.Index)
+	authenticatedAPIV1.GET("/workflows", h.workflows)
 
 	cluster := authenticatedAPIV1.Group("/cluster")
 	cluster.POST("/", h.AddCluster) // Resource from Add/Update/Delete event
@@ -93,13 +95,14 @@ func (h APIHandler) RegisterRoutes() {
 	cluster.PUT("/:cluster_name/sync-dependencies", h.SyncEvent)
 	cluster.POST("/:cluster_name/event", h.ResourceEvent) // routes.GET("/cluster-name/:cluster_name", h.GetCluster) // to be removed
 	cluster.PUT("/:cluster_name/event", h.ResourceEvent)
-	cluster.GET("/:cluster_name/resource/:namespace/:name/poll", h.ResourcePoll) // Poll for resource objects in the cluster
 	cluster.DELETE("/:cluster_name/event/:tfo_resource_uuid", h.ResourceEvent)
+	cluster.GET("/:cluster_name/resource/:namespace/:name/poll", h.ResourcePoll) // Poll for resource objects in the cluster
 	cluster.GET("/:cluster_name/resource/:namespace/:name/debug", h.Debugger)
 	cluster.GET("/:cluster_name/debug/:namespace/:name", h.Debugger) // Alias
 	cluster.GET("/:cluster_name/resource/:namespace/:name/status", h.ResourceStatusCheck)
 	cluster.GET("/:cluster_name/status/:namespace/:name", h.ResourceStatusCheck) // Alias
 	cluster.GET("/:cluster_name/resource/:namespace/:name/last-task-log", h.LastTaskLog)
+	cluster.GET("/:cluster_name/resource/:namespace/:name/generation/:generation/info", h.getWorkflowInfo)
 
 	metrics := preauth.Group("/metrics")
 	metrics.GET("/total/resources", h.TotalResources)
@@ -116,7 +119,10 @@ func (h APIHandler) RegisterRoutes() {
 	// List Generations
 	authenticatedAPIV1.GET("/resource/:tfo_resource_uuid/generations", h.GetDistinctGeneration)
 	// ReourceSpec
-	authenticatedAPIV1.GET("/resource/:tfo_resource_uuid/resource-spec/generation/:generation", h.GetResourceSpec)
+	authenticatedAPIV1.GET("/resource/:tfo_resource_uuid/generation/:generation/resource-spec", h.getWorkflowResourceConfiguration)
+	authenticatedAPIV1.GET("/resource/:tfo_resource_uuid/generation/:generation/tasks", h.getAllTasksGeneratedForResource)
+	authenticatedAPIV1.GET("/resource/:tfo_resource_uuid/generation/:generation/latest-tasks", h.getHighestRerunOfTasksGeneratedForResource)
+	authenticatedAPIV1.GET("/resource/:tfo_resource_uuid/generation/:generation/approval-status", h.getApprovalStatusForResource)
 
 	authenticatedAPIV1.GET("/resource/:tfo_resource_uuid/logs", h.GetClustersResourcesLogs)
 	authenticatedAPIV1.GET("/resource/:tfo_resource_uuid/logs/generation/:generation", h.GetClustersResourcesLogs)

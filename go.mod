@@ -10,7 +10,7 @@ require (
 	github.com/isaaguilar/kedge v0.0.0-20230623005919-25931c711d84
 	github.com/spf13/viper v1.12.0
 	gorm.io/driver/postgres v1.3.9
-	gorm.io/gorm v1.23.8
+	gorm.io/gorm v1.25.5
 	k8s.io/api v0.27.4
 	k8s.io/apimachinery v0.27.4
 	k8s.io/client-go v0.27.4

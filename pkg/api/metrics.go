@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/galleybytes/terraform-operator-api/pkg/common/models"
@@ -8,15 +9,25 @@ import (
 	"gorm.io/gorm"
 )
 
-func approvalStatusBasedOnLastestRerunOfResource(db *gorm.DB, tfoResourceUUID, generation string) *gorm.DB {
+func resourceLog(db *gorm.DB, taskUUID string) *gorm.DB {
+	return db.Table("tfo_task_logs").
+		Select("message").
+		Where("task_pod_uuid = ?", taskUUID)
+}
+
+func requiredApprovalPodUUID(db *gorm.DB, tfoResourceUUID, generation string) *gorm.DB {
 	maxRerun := db.Table("task_pods").
 		Select("MAX(rerun)").
 		Where("tfo_resource_uuid = ? AND generation = ?", tfoResourceUUID, generation)
 
-	taskPodUUID := db.Debug().Table("task_pods").
+	return db.Table("task_pods").
 		Select("uuid").
 		Where("tfo_resource_uuid = ? AND generation = ? AND  task_type = 'plan' AND rerun = (?)", tfoResourceUUID, generation, maxRerun)
 
+}
+
+func approvalStatusBasedOnLastestRerunOfResource(db *gorm.DB, tfoResourceUUID, generation string) *gorm.DB {
+	taskPodUUID := requiredApprovalPodUUID(db, tfoResourceUUID, generation)
 	return db.Debug().Table("approvals").
 		Select("*").
 		Where("task_pod_uuid = (?)", taskPodUUID)
@@ -58,15 +69,23 @@ func workflow(db *gorm.DB, clusterName uint, namespace, name string) *gorm.DB {
 }
 
 func workflows(db *gorm.DB) *gorm.DB {
-	return db.Table("tfo_resources").
+	return db.Debug().Table("tfo_resources").
 		Select("tfo_resources.uuid, tfo_resources.current_generation, tfo_resources.name, tfo_resources.namespace, tfo_resources.current_state, clusters.name AS cluster_name").
 		Joins("JOIN clusters ON tfo_resources.cluster_id = clusters.id").
 		Where("tfo_resources.deleted_at is null")
 }
 
 func (h APIHandler) TotalResources(c *gin.Context) {
+	query := workflows(h.DB)
+
+	matchAny, _ := c.GetQuery("matchAny")
+	if matchAny != "" {
+		m := fmt.Sprintf("%%%s%%", matchAny)
+		query.Where("(tfo_resources.name LIKE ? or tfo_resources.namespace LIKE ? or clusters.name LIKE ?)", m, m, m)
+	}
+
 	var count int64
-	workflows(h.DB).Count(&count)
+	query.Count(&count)
 	c.JSON(http.StatusOK, response(http.StatusOK, "", []int64{count}))
 }
 
@@ -75,4 +94,22 @@ func (h APIHandler) TotalFailedResources(c *gin.Context) {
 	var tfoResources []models.TFOResource
 	h.DB.Model(&tfoResources).Where("current_state = 'failed'").Count(&count)
 	c.JSON(http.StatusOK, response(http.StatusOK, "", []int64{count}))
+}
+
+func (h APIHandler) dashboardRedirect(c *gin.Context) {
+	if h.dashboard == nil {
+		c.JSON(http.StatusNotFound, response(http.StatusNotFound, "--dashboard not configured", []any{}))
+		return
+	}
+	if *h.dashboard == "" {
+		c.JSON(http.StatusNotFound, response(http.StatusNotFound, "--dashboard not configured", []any{}))
+		return
+	}
+	userToken, _ := userToken(c)
+	loginRedirect, _ := c.GetQuery("loginRedirect")
+	if loginRedirect != "" {
+		loginRedirect = "&loginRedirect=" + loginRedirect
+	}
+
+	c.Redirect(http.StatusMovedPermanently, *h.dashboard+"?token="+userToken+loginRedirect)
 }

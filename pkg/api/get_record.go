@@ -107,7 +107,7 @@ func (h APIHandler) Index(c *gin.Context) {
 }
 
 func (h APIHandler) workflows(c *gin.Context) {
-
+	matchAny, _ := c.GetQuery("matchAny")
 	offset, _ := c.GetQuery("offset")
 	limit, _ := c.GetQuery("limit")
 	n, _ := strconv.Atoi(offset)
@@ -126,10 +126,16 @@ func (h APIHandler) workflows(c *gin.Context) {
 		CurrentGeneration string `json:"current_generation"`
 	}
 
-	workflows(h.DB).
+	query := workflows(h.DB).
 		Limit(l).
-		Offset(n).
-		Scan(&result)
+		Offset(n)
+
+	if matchAny != "" {
+		m := fmt.Sprintf("%%%s%%", matchAny)
+		query.Where("(tfo_resources.name LIKE ? or tfo_resources.namespace LIKE ? or clusters.name LIKE ?)", m, m, m)
+	}
+
+	query.Scan(&result)
 
 	c.JSON(http.StatusOK, response(http.StatusOK, "", result))
 }

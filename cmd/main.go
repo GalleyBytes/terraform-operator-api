@@ -28,6 +28,7 @@ var (
 	samlMetadataURL string
 	useServiceHost  bool
 	serviceName     string
+	dashboard       string
 )
 
 func main() {
@@ -57,6 +58,8 @@ func main() {
 	viper.BindPFlag("use-service-host", pflag.Lookup("use-service-host"))
 	pflag.StringVar(&serviceName, "service-name", "", "When `--use-service-host` will looup clusterIP of service")
 	viper.BindPFlag("service-name", pflag.Lookup("service-name"))
+	pflag.StringVar(&dashboard, "dashboard", "", "Connect to the dashboard with api credentials")
+	viper.BindPFlag("dashboard", pflag.Lookup("dashboard"))
 	pflag.Parse()
 
 	pflag.Set("alsologtostderr", "false")
@@ -76,6 +79,7 @@ func main() {
 	samlMetadataURL = viper.GetString("saml-metadata-url")
 	useServiceHost = viper.GetBool("use-service-host")
 	serviceName = viper.GetString("service-name")
+	dashboard = viper.GetString("dashboard")
 
 	clientset := kubernetes.NewForConfigOrDie(NewConfigOrDie(os.Getenv("KUBECONFIG")))
 	var database *gorm.DB
@@ -101,7 +105,7 @@ func main() {
 		}
 	}
 
-	apiHandler := api.NewAPIHandler(database, clientset, ssoConfig, &serviceIP)
+	apiHandler := api.NewAPIHandler(database, clientset, ssoConfig, &serviceIP, &dashboard)
 	apiHandler.RegisterRoutes()
 	apiHandler.Server.Run(port)
 }

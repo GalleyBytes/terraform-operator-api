@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/galleybytes/terraform-operator-api/pkg/common/models"
 	"github.com/gin-gonic/gin"
@@ -72,6 +73,8 @@ func (h APIHandler) AddTaskPod(c *gin.Context) {
 		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
 		return
 	}
+
+	h.Cache.Set(taskPod.TFOResourceUUID, "", 20*time.Second)
 
 	c.JSON(http.StatusNoContent, nil)
 

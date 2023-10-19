@@ -21,6 +21,7 @@ import (
 	tfv1beta1 "github.com/galleybytes/terraform-operator/pkg/apis/tf/v1beta1"
 	tfo "github.com/galleybytes/terraform-operator/pkg/client/clientset/versioned"
 	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
 	"github.com/isaaguilar/kedge"
 	"gopkg.in/yaml.v3"
 	"gorm.io/gorm"
@@ -561,6 +562,122 @@ func IsWorkflowRunning(status tfv1beta1.TerraformStatus) bool {
 	}
 }
 
+// Sends logs generally used before opening the websocket. The socket logs will only gather logs
+// open cached event items
+func (h APIHandler) preLogs(c *gin.Context) {
+	tfoResourceUUID := c.Param("tfo_resource_uuid")
+	generation := c.Param("generation")
+	rerun := c.Query("rerun")
+	_ = rerun
+	c.JSON(http.StatusOK, response(http.StatusOK, "", logs(h.DB, tfoResourceUUID, generation)))
+}
+
+func (h APIHandler) websocketLogs(c *gin.Context) {
+	tfoResourceUUID := c.Param("tfo_resource_uuid")
+	generation := c.Param("generation")
+	rerun := c.Query("rerun")
+	_ = rerun
+
+	var wsupgrader = websocket.Upgrader{
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+	}
+
+	wsupgrader.CheckOrigin = func(r *http.Request) bool { return true }
+
+	conn, err := wsupgrader.Upgrade(c.Writer, c.Request, nil)
+	if err != nil {
+		log.Printf("Failed to set websocket upgrade: %+v", err)
+		return
+	}
+	defer conn.Close()
+
+	s := SocketListener{Connection: conn}
+	s.Listen()
+
+	for {
+		select {
+		case i := <-s.EventType:
+			if i == -1 {
+				log.Println("Closing socket: client is going away")
+				return
+			}
+			if s.Err != nil {
+				log.Printf("An error was sent in the socket event: %s", s.Err.Error())
+				// return?
+			}
+			log.Printf("The event sent was: %s. Listening for next event...", string(s.Message))
+			s.Listen()
+
+		default:
+			if _, found := h.Cache.Get(tfoResourceUUID); found {
+				h.Cache.Delete(tfoResourceUUID)
+
+				for _, log := range logs(h.DB, tfoResourceUUID, generation) {
+					b, err := json.Marshal(log)
+					if err != nil {
+						return
+					}
+					conn.WriteMessage(1, b)
+				}
+			}
+			time.Sleep(1 * time.Second)
+		}
+	}
+
+}
+
+type TaskLog struct {
+	TaskType string `json:"task_type"`
+	UUID     string `json:"uuid"`
+	Message  string `json:"message"`
+}
+
+func logs(db *gorm.DB, tfoResourceUUID string, generation string) []TaskLog {
+	tasks := []models.TaskPod{}
+	queryResult := allTasksGeneratedForResource(db, tfoResourceUUID, generation).Scan(&tasks)
+	if queryResult.Error != nil {
+		return nil
+	}
+
+	taskMap := map[string][]models.TaskPod{}
+	for _, item := range tasks {
+		if taskMap[item.TaskType] == nil {
+			taskMap[item.TaskType] = []models.TaskPod{item}
+		} else {
+			taskMap[item.TaskType] = append(taskMap[item.TaskType], item)
+		}
+	}
+
+	filteredData := []models.TaskPod{}
+	currentHightestRerun := 0
+	for _, taskType := range taskTypesInOrder {
+		if tasks, found := taskMap[taskType]; found {
+			indexOfHightestRerun := 0
+			for idx, task := range tasks {
+				if task.Rerun >= currentHightestRerun {
+					currentHightestRerun = task.Rerun
+					indexOfHightestRerun = idx
+				}
+			}
+			filteredData = append(filteredData, tasks[indexOfHightestRerun])
+		}
+	}
+
+	var logs []TaskLog
+	for _, task := range filteredData {
+		message := ""
+		if result := resourceLog(db, task.UUID).Scan(&message); result.Error == nil {
+			logs = append(logs, TaskLog{
+				UUID:     task.UUID,
+				Message:  message,
+				TaskType: task.TaskType,
+			})
+		}
+	}
+	return logs
+}
+
 // Given some human readable data, getWorkflowInfo queries the database and aggregates data relevant
 // at the moment of querying. Queries span multiple tables over a few lookups.
 // As the function progresses, more data is added to the response. In between lookups, if no data is found
@@ -775,6 +892,42 @@ func (h APIHandler) getHighestRerunOfTasksGeneratedForResource(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, response(http.StatusOK, "", filteredData))
+}
+
+func (h APIHandler) setApprovalForResource(c *gin.Context) {
+	resourceUUID := c.Param("tfo_resource_uuid")
+	generation := c.Param("generation")
+
+	jsonData := struct {
+		Approval bool `json:"approval"`
+	}{}
+	err := c.BindJSON(&jsonData)
+	if err != nil {
+		log.Println(err)
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
+		return
+	}
+
+	var podUUID string
+	result := requiredApprovalPodUUID(h.DB, resourceUUID, generation).Scan(&podUUID)
+	if result.Error != nil {
+		c.JSON(http.StatusNotFound, response(http.StatusNotFound, result.Error.Error(), []any{}))
+		return
+	}
+
+	approval := models.Approval{
+		IsApproved:  jsonData.Approval,
+		TaskPodUUID: podUUID,
+	}
+
+	createResult := h.DB.Create(&approval)
+	if createResult.Error != nil {
+		c.JSON(http.StatusBadRequest, response(http.StatusBadRequest, createResult.Error.Error(), []any{}))
+		return
+	}
+
+	c.JSON(http.StatusNoContent, nil)
+
 }
 
 func (h APIHandler) getApprovalStatusForResource(c *gin.Context) {

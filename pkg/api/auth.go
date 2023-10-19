@@ -35,14 +35,28 @@ func unauthorized(c *gin.Context, reason string) {
 	c.Abort()
 }
 
-func validateJwt(c *gin.Context) {
-
-	if c.Request.Header["Token"] == nil {
-		unauthorized(c, "token not in header")
-		return
+func userToken(c *gin.Context) (string, error) {
+	if c.Request.Header["Token"] == nil && c.Query("token") == "" {
+		return "", fmt.Errorf("token not in header")
 	}
 
-	token, err := jwt.Parse(c.Request.Header["Token"][0], func(token *jwt.Token) (interface{}, error) {
+	var userProvidedJWT string
+	if tokenHeader := c.Request.Header["Token"]; tokenHeader != nil {
+		userProvidedJWT = tokenHeader[0]
+	} else {
+		userProvidedJWT = c.Query("token")
+	}
+	return userProvidedJWT, nil
+}
+
+func validateJwt(c *gin.Context) {
+
+	userProvidedJWT, err := userToken(c)
+	if err != nil {
+		unauthorized(c, err.Error())
+	}
+
+	token, err := jwt.Parse(userProvidedJWT, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("there was an error in parsing")
 		}

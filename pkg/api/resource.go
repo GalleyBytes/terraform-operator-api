@@ -335,7 +335,7 @@ func (h APIHandler) VClusterTFOHealth(c *gin.Context) {
 	c.JSON(http.StatusNoContent, nil)
 }
 
-type statusCheckResponse struct {
+type StatusCheckResponse struct {
 	DidStart     bool   `json:"did_start"`
 	DidComplete  bool   `json:"did_complete"`
 	CurrentState string `json:"current_state"`
@@ -353,7 +353,7 @@ func (h APIHandler) ResourceStatusCheck(c *gin.Context) {
 	name := c.Param("name")
 	namespace := c.Param("namespace")
 
-	returnStatusCheck(c, h.clientset, clusterName, namespace, name)
+	statusCheckAndUpdate(c, h.DB, h.clientset, clusterName, namespace, name)
 }
 
 func (h APIHandler) ResourceStatusCheckViaTask(c *gin.Context) {
@@ -378,10 +378,10 @@ func (h APIHandler) ResourceStatusCheckViaTask(c *gin.Context) {
 	namespace := tfoResourceFromDatabase.Namespace
 	name := tfoResourceFromDatabase.Name
 
-	returnStatusCheck(c, h.clientset, clusterName, namespace, name)
+	statusCheckAndUpdate(c, h.DB, h.clientset, clusterName, namespace, name)
 }
 
-func returnStatusCheck(c *gin.Context, clientset kubernetes.Interface, clusterName, namespace, name string) {
+func statusCheckAndUpdate(c *gin.Context, db *gorm.DB, clientset kubernetes.Interface, clusterName, namespace, name string) {
 	resource, err := getResource(clientset, clusterName, namespace, name, c)
 	if err != nil {
 		if kerrors.IsNotFound(err) {
@@ -392,7 +392,7 @@ func returnStatusCheck(c *gin.Context, clientset kubernetes.Interface, clusterNa
 		return
 	}
 
-	responseJSONData := []statusCheckResponse{
+	responseJSONData := []StatusCheckResponse{
 		{
 			DidStart:     resource.Generation == resource.Status.Stage.Generation,
 			DidComplete:  !IsWorkflowRunning(resource.Status),
@@ -400,10 +400,30 @@ func returnStatusCheck(c *gin.Context, clientset kubernetes.Interface, clusterNa
 			CurrentTask:  resource.Status.Stage.TaskType.String(),
 		},
 	}
+
+	uuid := ""
+OptLoop:
+	for _, opt := range resource.Spec.TaskOptions {
+		for _, env := range opt.Env {
+			if env.Name == "TFO_ORIGIN_UUID" {
+				uuid = env.Value
+				break OptLoop
+			}
+		}
+	}
+	if uuid != "" {
+		tfoResourceFromDatabase := models.TFOResource{}
+		result := db.Where("uuid = ?", uuid).First(&tfoResourceFromDatabase)
+		if result.Error == nil {
+			tfoResourceFromDatabase.CurrentState = models.ResourceState(responseJSONData[0].CurrentState)
+			db.Save(tfoResourceFromDatabase)
+		}
+	}
+
 	c.JSON(http.StatusOK, response(http.StatusOK, "", responseJSONData))
 }
 
-func (h APIHandler) UpdateResourceStatus(c *gin.Context) {
+func (h APIHandler) UpdateResourceStatusViaTask(c *gin.Context) {
 	jsonData := struct {
 		Status string `json:"status"`
 	}{}

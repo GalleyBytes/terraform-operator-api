@@ -149,7 +149,7 @@ func (h APIHandler) RegisterRoutes() {
 	authenticatedTask.Use(validateTaskJWT)
 	authenticatedTask.POST("", h.AddTaskPod)
 	authenticatedTask.GET("/status", h.ResourceStatusCheckViaTask)
-	authenticatedTask.POST("/status", h.UpdateResourceStatus)
+	authenticatedTask.POST("/status", h.UpdateResourceStatusViaTask)
 	authenticatedTask.GET("/:task_pod_uuid/approval-status", h.GetApprovalStatusViaTaskPodUUID)
 
 	// Approval

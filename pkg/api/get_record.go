@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	ptylib "github.com/creack/pty"
@@ -132,7 +133,39 @@ func (h APIHandler) workflows(c *gin.Context) {
 
 	if matchAny != "" {
 		m := fmt.Sprintf("%%%s%%", matchAny)
-		query.Where("(tfo_resources.name LIKE ? or tfo_resources.namespace LIKE ? or clusters.name LIKE ?)", m, m, m)
+		name := m
+		namespace := m
+		clusterName := m
+
+		if strings.Contains(matchAny, "=") {
+			name = "%"
+			namespace = "%"
+			clusterName = "%"
+			for _, matchAnyOfColumn := range strings.Split(matchAny, " ") {
+				if !strings.Contains(matchAnyOfColumn, "=") {
+					continue
+				}
+				columnQuery := strings.Split(matchAnyOfColumn, "=")
+				key := columnQuery[0]
+				value := columnQuery[1]
+				if key == "name" {
+					query.Where("tfo_resources.name LIKE ?", fmt.Sprintf("%%%s%%", value))
+				}
+				if key == "namespace" {
+					query.Where("tfo_resources.namespace LIKE ?", fmt.Sprintf("%%%s%%", value))
+				}
+				if strings.HasPrefix(key, "cluster") {
+					query.Where("clusters.name LIKE ?", fmt.Sprintf("%%%s%%", value))
+				}
+			}
+		} else {
+			query.Where("(tfo_resources.name LIKE ? or tfo_resources.namespace LIKE ? or clusters.name LIKE ?)",
+				name,
+				namespace,
+				clusterName,
+			)
+		}
+
 	}
 
 	query.Scan(&result)

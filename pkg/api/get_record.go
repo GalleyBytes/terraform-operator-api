@@ -129,7 +129,8 @@ func (h APIHandler) workflows(c *gin.Context) {
 
 	query := workflows(h.DB).
 		Limit(l).
-		Offset(n)
+		Offset(n).
+		Order("tfo_resources.updated_at DESC")
 
 	if matchAny != "" {
 		m := fmt.Sprintf("%%%s%%", matchAny)
@@ -165,7 +166,6 @@ func (h APIHandler) workflows(c *gin.Context) {
 				clusterName,
 			)
 		}
-
 	}
 
 	query.Scan(&result)

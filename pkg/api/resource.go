@@ -335,6 +335,48 @@ func (h APIHandler) VClusterTFOHealth(c *gin.Context) {
 	c.JSON(http.StatusNoContent, nil)
 }
 
+func (h APIHandler) rerunWorkflow(c *gin.Context) {
+	clusterName := c.Param("cluster_name")
+	clusterID := h.getClusterID(clusterName)
+	if clusterID == 0 {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("cluster_name '%s' not found", clusterName), nil))
+		return
+	}
+
+	name := c.Param("name")
+	namespace := c.Param("namespace")
+
+	err := rerun(h.clientset, clusterName, namespace, name, c)
+	if err != nil {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("Failed to trigger rerun: %s", err), []any{}))
+		return
+	}
+	c.JSON(http.StatusNoContent, nil)
+}
+
+func rerun(parentClientset kubernetes.Interface, clusterName, namespace, name string, ctx context.Context) error {
+	config, err := getVclusterConfig(parentClientset, "internal", clusterName)
+	if err != nil {
+		return err
+	}
+	tfoclientset := tfo.NewForConfigOrDie(config)
+	resource, err := tfoclientset.TfV1beta1().Terraforms(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return err
+	}
+
+	if resource.Labels == nil {
+		resource.Labels = map[string]string{}
+	}
+
+	resource.Labels["kubernetes.io/change-cause"] = fmt.Sprintf("api-triggered-rerun-%s", time.Now().Format("20060102150405"))
+	_, err = tfoclientset.TfV1beta1().Terraforms(namespace).Update(ctx, resource, metav1.UpdateOptions{})
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
 type StatusCheckResponse struct {
 	DidStart     bool   `json:"did_start"`
 	DidComplete  bool   `json:"did_complete"`
@@ -651,6 +693,7 @@ type TaskLog struct {
 	TaskType string `json:"task_type"`
 	UUID     string `json:"uuid"`
 	Message  string `json:"message"`
+	Rerun    int    `json:"rerun"`
 }
 
 func logs(db *gorm.DB, tfoResourceUUID string, generation string) []TaskLog {
@@ -673,14 +716,16 @@ func logs(db *gorm.DB, tfoResourceUUID string, generation string) []TaskLog {
 	currentHightestRerun := 0
 	for _, taskType := range taskTypesInOrder {
 		if tasks, found := taskMap[taskType]; found {
-			indexOfHightestRerun := 0
+			indexOfHighestRerun := -1
 			for idx, task := range tasks {
 				if task.Rerun >= currentHightestRerun {
 					currentHightestRerun = task.Rerun
-					indexOfHightestRerun = idx
+					indexOfHighestRerun = idx
 				}
 			}
-			filteredData = append(filteredData, tasks[indexOfHightestRerun])
+			if indexOfHighestRerun > -1 {
+				filteredData = append(filteredData, tasks[indexOfHighestRerun])
+			}
 		}
 	}
 
@@ -692,6 +737,7 @@ func logs(db *gorm.DB, tfoResourceUUID string, generation string) []TaskLog {
 				UUID:     task.UUID,
 				Message:  message,
 				TaskType: task.TaskType,
+				Rerun:    task.Rerun,
 			})
 		}
 	}

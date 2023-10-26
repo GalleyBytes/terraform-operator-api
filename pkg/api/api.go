@@ -112,6 +112,7 @@ func (h APIHandler) RegisterRoutes() {
 	cluster.GET("/:cluster_name/resource/:namespace/:name/status", h.ResourceStatusCheck)
 	cluster.GET("/:cluster_name/status/:namespace/:name", h.ResourceStatusCheck) // Alias
 	cluster.GET("/:cluster_name/resource/:namespace/:name/last-task-log", h.LastTaskLog)
+	cluster.PUT("/:cluster_name/resource/:namespace/:name/rerun", h.rerunWorkflow)
 	cluster.GET("/:cluster_name/resource/:namespace/:name/generation/:generation/info", h.getWorkflowInfo)
 
 	metrics := authenticatedAPIV1.Group("/metrics")

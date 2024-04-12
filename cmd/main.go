@@ -20,7 +20,7 @@ import (
 )
 
 var (
-	port            string
+	addr            string
 	dbURL           string
 	ssoLoginURL     string
 	samlIssuer      string
@@ -42,8 +42,8 @@ func main() {
 	pflag.CommandLine.AddGoFlag(flag.CommandLine.Lookup("v"))
 	pflag.CommandLine.AddGoFlag(flag.CommandLine.Lookup("logtostderr"))
 	pflag.CommandLine.Set("logtostderr", "true")
-	pflag.StringVar(&port, "port", "", "Port to expose the API on")
-	viper.BindPFlag("port", pflag.Lookup("port"))
+	pflag.StringVar(&addr, "addr", "", "Address to expose the API on")
+	viper.BindPFlag("addr", pflag.Lookup("addr"))
 	pflag.StringVar(&dbURL, "db-url", "", "Database url format (Example: 'postgres://user:password@srv:5432/db')")
 	viper.BindPFlag("db-url", pflag.Lookup("db-url"))
 	pflag.StringVar(&ssoLoginURL, "sso-login-url", "", "IDP Login URL ")
@@ -71,7 +71,7 @@ func main() {
 	klog.Info("Don't show this log")
 	klog.Warning("Don't show this warning")
 
-	port = viper.GetString("port")
+	addr = viper.GetString("addr")
 	dbURL = viper.GetString("db-url")
 	ssoLoginURL = viper.GetString("sso-login-url")
 	samlIssuer = viper.GetString("saml-issuer")
@@ -85,6 +85,10 @@ func main() {
 	var database *gorm.DB
 	if dbURL != "" {
 		database = db.Init(dbURL)
+	}
+
+	if addr == "" {
+		addr = ":3000"
 	}
 
 	ssoConfig, err := api.NewSAMLConfig(samlIssuer, samlRecipient, samlMetadataURL)
@@ -107,7 +111,8 @@ func main() {
 
 	apiHandler := api.NewAPIHandler(database, clientset, ssoConfig, &serviceIP, &dashboard)
 	apiHandler.RegisterRoutes()
-	apiHandler.Server.Run(port)
+	fmt.Printf("Starting server on %s\n", addr)
+	apiHandler.Server.Run(addr)
 }
 
 func NewConfigOrDie(kubeconfigPath string) *rest.Config {

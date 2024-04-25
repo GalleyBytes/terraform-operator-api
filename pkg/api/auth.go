@@ -192,7 +192,7 @@ func (h APIHandler) samlConnecter(c *gin.Context) {
 		return
 	}
 
-	fmt.Fprintln(c.Writer, buf.String())
+	c.Redirect(http.StatusMovedPermanently, *h.dashboard+"?token="+jwtToken)
 }
 
 func fetchIDPCertificate(metadataURL string) (*x509.Certificate, error) {

@@ -7,7 +7,7 @@
       var statusElement = document.getElementById("status");
       var xhr = new XMLHttpRequest();
       xhr.open("POST", "http://localhost:18080/connecter?token={{ .Token }}");
-      xhr.setRequestHeader("Content-Type", "application/json");
+      xhr.setRequestHeader("Content-Type", "text/plain");
 
       xhr.addEventListener("load", function () {
         if (this.status === 200) {
@@ -19,7 +19,12 @@
       });
 
       xhr.addEventListener("error", function(event) {
-          statusElement.innerHTML = "An error occurred: " + event.message
+          var token = "{{ .Token }}";
+          if (token === "") {
+            statusElement.innerHTML = "An error occurred: " + event.message
+          } else {
+            statusElement.innerHTML = "<div>Could not automatically save token. Click to button to complete token downlaod.</div><br /><a href='http://localhost:18080/connecter?token={{ .Token }}&a=true'>Save Token</a><br/><br/>"
+          }
       });
 
       xhr.send(JSON.stringify(data));

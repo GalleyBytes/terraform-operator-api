@@ -119,12 +119,13 @@ func (h APIHandler) workflows(c *gin.Context) {
 	}
 
 	var result []struct {
-		Name              string `json:"name"`
-		Namespace         string `json:"namespace"`
-		ClusterName       string `json:"cluster_name"`
-		CurrentState      string `json:"state"`
-		UUID              string `json:"uuid"`
-		CurrentGeneration string `json:"current_generation"`
+		Name              string    `json:"name"`
+		Namespace         string    `json:"namespace"`
+		ClusterName       string    `json:"cluster_name"`
+		CurrentState      string    `json:"state"`
+		UUID              string    `json:"uuid"`
+		CurrentGeneration string    `json:"current_generation"`
+		CreatedAt         time.Time `json:"created_at"`
 	}
 
 	query := workflows(h.DB).

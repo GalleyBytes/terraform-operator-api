@@ -850,7 +850,7 @@ func (h APIHandler) getWorkflowInfo(c *gin.Context) {
 
 	queryResult := workflow(h.DB, clusterID, namespace, name).Scan(&tfoResourcesData)
 	if queryResult.Error != nil {
-		c.JSON(http.StatusNotFound, response(http.StatusNotFound, queryResult.Error.Error(), []any{}))
+		c.JSON(http.StatusNotFound, response(http.StatusNotFound, "Workflow Query Error: "+queryResult.Error.Error(), []any{}))
 		return
 	}
 	if len(tfoResourcesData) == 0 {
@@ -873,7 +873,7 @@ func (h APIHandler) getWorkflowInfo(c *gin.Context) {
 
 	queryResult = resourceSpec(h.DB, resourceUUID, generation).Scan(&tfoResourceSpecsData)
 	if queryResult.Error != nil {
-		c.JSON(http.StatusNotFound, response(http.StatusNotFound, queryResult.Error.Error(), []any{}))
+		c.JSON(http.StatusNotFound, response(http.StatusNotFound, "ResourceSpec Query Error: "+queryResult.Error.Error(), []any{}))
 		return
 	}
 	if len(tfoResourceSpecsData) == 0 {
@@ -887,7 +887,7 @@ func (h APIHandler) getWorkflowInfo(c *gin.Context) {
 
 	queryResult = allTasksGeneratedForResource(h.DB, resourceUUID, generation).Scan(&tasks)
 	if queryResult.Error != nil {
-		c.JSON(http.StatusNotFound, response(http.StatusNotFound, queryResult.Error.Error(), []any{}))
+		c.JSON(http.StatusNotFound, response(http.StatusNotFound, "AllTasksGeneratedForResource Query Error: "+queryResult.Error.Error(), []any{}))
 		return
 	}
 	if len(tasks) == 0 {
@@ -923,7 +923,7 @@ func (h APIHandler) getWorkflowInfo(c *gin.Context) {
 
 	queryResult = approvalStatusBasedOnLastestRerunOfResource(h.DB, resourceUUID, generation).Scan(&approvals)
 	if queryResult.Error != nil {
-		c.JSON(http.StatusNotFound, response(http.StatusNotFound, queryResult.Error.Error(), []any{}))
+		c.JSON(http.StatusNotFound, response(http.StatusNotFound, "ApprovalStatusBasedOnLatestRerunOfResource Query Error: "+queryResult.Error.Error(), []any{}))
 		return
 	}
 	if len(approvals) == 0 {

@@ -21,9 +21,13 @@ func requiredApprovalPodUUID(db *gorm.DB, tfoResourceUUID, generation string) *g
 		Select("MAX(rerun)").
 		Where("tfo_resource_uuid = ? AND generation = ?", tfoResourceUUID, generation)
 
+	maxInClusterGeneration := db.Table("task_pods").
+		Select("MAX(in_cluster_generation)").
+		Where("tfo_resource_uuid = ? AND generation = ? AND rerun = (?)", tfoResourceUUID, generation, maxRerun)
+
 	return db.Table("task_pods").
 		Select("uuid").
-		Where("tfo_resource_uuid = ? AND generation = ? AND  task_type = 'plan' AND rerun = (?)", tfoResourceUUID, generation, maxRerun)
+		Where("tfo_resource_uuid = ? AND generation = ? AND  task_type = 'plan' AND rerun = (?) and in_cluster_generation = (?)", tfoResourceUUID, generation, maxRerun, maxInClusterGeneration)
 
 }
 

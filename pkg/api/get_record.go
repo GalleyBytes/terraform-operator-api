@@ -126,6 +126,7 @@ func (h APIHandler) workflows(c *gin.Context) {
 		UUID              string    `json:"uuid"`
 		CurrentGeneration string    `json:"current_generation"`
 		CreatedAt         time.Time `json:"created_at"`
+		UpdatedAt         time.Time `json:"updated_at"`
 	}
 
 	query := workflows(h.DB).
@@ -169,7 +170,7 @@ func (h APIHandler) workflows(c *gin.Context) {
 		}
 	}
 
-	query.Scan(&result)
+	query.Debug().Scan(&result)
 
 	c.JSON(http.StatusOK, response(http.StatusOK, "", result))
 }

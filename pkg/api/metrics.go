@@ -75,7 +75,16 @@ func workflow(db *gorm.DB, clusterName uint, namespace, name string) *gorm.DB {
 
 func workflows(db *gorm.DB) *gorm.DB {
 	return db.Debug().Table("tfo_resources").
-		Select("tfo_resources.uuid, tfo_resources.current_generation, tfo_resources.name, tfo_resources.namespace, tfo_resources.current_state, clusters.name AS cluster_name").
+		Select(`
+			tfo_resources.uuid,
+			tfo_resources.current_generation,
+			tfo_resources.name,
+			tfo_resources.namespace,
+			tfo_resources.current_state,
+			tfo_resources.updated_at,
+			tfo_resources.created_at,
+			clusters.name AS cluster_name
+		`).
 		Joins("JOIN clusters ON tfo_resources.cluster_id = clusters.id").
 		Where("tfo_resources.deleted_at is null")
 }

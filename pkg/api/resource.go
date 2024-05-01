@@ -694,11 +694,13 @@ func (h APIHandler) websocketLogs(c *gin.Context) {
 }
 
 type TaskLog struct {
-	TaskType string `json:"task_type"`
-	UUID     string `json:"uuid"`
-	Message  string `json:"message"`
-	Rerun    int    `json:"rerun"`
-	TaskID   int    `json:"task_id"`
+	TaskType  string    `json:"task_type"`
+	UUID      string    `json:"uuid"`
+	Message   string    `json:"message"`
+	Rerun     int       `json:"rerun"`
+	TaskID    int       `json:"task_id"`
+	UpdatedAt time.Time `json:"updated_at"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 func logs(db *gorm.DB, tfoResourceUUID string, generation string) []TaskLog {
@@ -784,11 +786,13 @@ func logs(db *gorm.DB, tfoResourceUUID string, generation string) []TaskLog {
 				taskID = 20
 			}
 			logs = append(logs, TaskLog{
-				UUID:     task.UUID,
-				Message:  message,
-				TaskType: task.TaskType,
-				Rerun:    task.Rerun,
-				TaskID:   taskID,
+				UUID:      task.UUID,
+				Message:   message,
+				TaskType:  task.TaskType,
+				Rerun:     task.Rerun,
+				TaskID:    taskID,
+				CreatedAt: task.CreatedAt,
+				UpdatedAt: task.UpdatedAt,
 			})
 		}
 	}

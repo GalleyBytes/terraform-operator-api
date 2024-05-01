@@ -694,6 +694,7 @@ type TaskLog struct {
 	UUID     string `json:"uuid"`
 	Message  string `json:"message"`
 	Rerun    int    `json:"rerun"`
+	TaskID   int    `json:"task_id"`
 }
 
 func logs(db *gorm.DB, tfoResourceUUID string, generation string) []TaskLog {
@@ -733,11 +734,57 @@ func logs(db *gorm.DB, tfoResourceUUID string, generation string) []TaskLog {
 	for _, task := range filteredData {
 		message := ""
 		if result := resourceLog(db, task.UUID).Scan(&message); result.Error == nil {
+			taskID := -1
+			switch task.TaskType {
+			case "setup":
+				taskID = 0
+			case "preinit":
+				taskID = 1
+			case "init":
+				taskID = 2
+			case "postinit":
+				taskID = 3
+			case "preplan":
+				taskID = 4
+			case "plan":
+				taskID = 5
+			case "postplan":
+				taskID = 6
+			case "preapply":
+				taskID = 7
+			case "apply":
+				taskID = 8
+			case "postapply":
+				taskID = 9
+			case "setup-delete":
+				taskID = 10
+			case "preinit-delete":
+				taskID = 11
+			case "init-delete":
+				taskID = 12
+			case "postinit-delete":
+				taskID = 13
+			case "preplan-delete":
+				taskID = 14
+			case "plan-delete":
+				taskID = 15
+			case "postplan-delete":
+				taskID = 16
+			case "preapply-delete":
+				taskID = 17
+			case "apply-delete":
+				taskID = 18
+			case "postapply-delete":
+				taskID = 19
+			default:
+				taskID = 20
+			}
 			logs = append(logs, TaskLog{
 				UUID:     task.UUID,
 				Message:  message,
 				TaskType: task.TaskType,
 				Rerun:    task.Rerun,
+				TaskID:   taskID,
 			})
 		}
 	}

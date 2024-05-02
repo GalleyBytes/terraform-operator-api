@@ -12,7 +12,7 @@ import (
 
 func resourceLog(db *gorm.DB, taskUUID string) *gorm.DB {
 	return db.Table("tfo_task_logs").
-		Select("message").
+		Select("message, updated_at, created_at").
 		Where("task_pod_uuid = ?", taskUUID)
 }
 
@@ -56,7 +56,14 @@ func allTasksGeneratedForResource(db *gorm.DB, tfoResourceUUID, generation strin
 
 func resourceSpec(db *gorm.DB, uuid, generation string) *gorm.DB {
 	return db.Table("tfo_resource_specs").
-		Select("generation, resource_spec, annotations, labels").
+		Select(`
+			generation,
+			resource_spec,
+			annotations,
+			labels,
+			created_at,
+			updated_at
+		`).
 		Where("tfo_resource_uuid = ? and generation = ?", uuid, generation)
 }
 
@@ -68,7 +75,10 @@ func approvalQuery(db *gorm.DB, uuid string) *gorm.DB {
 
 func workflow(db *gorm.DB, clusterName uint, namespace, name string) *gorm.DB {
 	return db.Table("tfo_resources").
-		Select("tfo_resources.*, clusters.name AS cluster_name").
+		Select(`
+			tfo_resources.*,
+			clusters.name AS cluster_name
+		`).
 		Joins("JOIN clusters ON tfo_resources.cluster_id = clusters.id").
 		Where("tfo_resources.deleted_at is null and tfo_resources.cluster_id = ? and tfo_resources.namespace = ? and tfo_resources.name = ?", clusterName, namespace, name)
 }

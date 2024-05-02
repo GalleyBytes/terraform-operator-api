@@ -13,6 +13,7 @@ import (
 )
 
 func (h APIHandler) AddTaskPod(c *gin.Context) {
+	now := time.Now().UTC()
 	token, err := taskJWT(c.Request.Header["Token"][0])
 	if err != nil {
 		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
@@ -55,6 +56,8 @@ func (h APIHandler) AddTaskPod(c *gin.Context) {
 		Rerun:               rerunID,
 		TFOResourceUUID:     resourceUUID,
 		InClusterGeneration: jsonData.InClusterGeneration,
+		CreatedAt:           now,
+		UpdatedAt:           now,
 	}
 	result := h.DB.Where("uuid = ?", &jsonData.UUID).FirstOrCreate(&taskPod)
 	if result.Error != nil {
@@ -82,8 +85,12 @@ func (h APIHandler) AddTaskPod(c *gin.Context) {
 
 // Write or update logs in database
 func saveTaskLog(db *gorm.DB, taskUUID, content string) error {
-
+	now := time.Now().UTC()
 	taskLog := models.TFOTaskLog{
+		Model: gorm.Model{
+			CreatedAt: now,
+			UpdatedAt: now,
+		},
 		TaskPodUUID: taskUUID,
 		Message:     content,
 		Size:        uint64(len([]byte(content))),
@@ -99,6 +106,7 @@ func saveTaskLog(db *gorm.DB, taskUUID, content string) error {
 		}
 		// The content has been updated. Read the bytes after what has already been written to preserve the
 		// original content. We don't want to allow logs in the database to be changed once they are written.
+		taskLog.UpdatedAt = now
 		taskLog.Message += string([]byte(content)[taskLog.Size:])
 		taskLog.Size = uint64(len([]byte(taskLog.Message)))
 		if result := db.Save(&taskLog); result.Error != nil {
@@ -107,23 +115,4 @@ func saveTaskLog(db *gorm.DB, taskUUID, content string) error {
 	}
 
 	return nil
-}
-
-func (h APIHandler) AddTFOTaskLogs(c *gin.Context) {
-	jsonData := struct {
-		TFOTaskLogs []models.TFOTaskLog `json:"tfo_task_logs"`
-	}{}
-	err := c.BindJSON(&jsonData)
-	if err != nil {
-		log.Println(err)
-		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
-		return
-	}
-	result := h.DB.Create(&jsonData.TFOTaskLogs)
-	if result.Error != nil {
-		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, result.Error.Error(), nil))
-		return
-	}
-
-	c.JSON(http.StatusNoContent, nil)
 }

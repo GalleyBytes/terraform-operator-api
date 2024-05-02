@@ -62,10 +62,10 @@ func (h APIHandler) GetDistinctGeneration(c *gin.Context) {
 	uuid := c.Param("tfo_resource_uuid")
 	var generation []int
 	if result := h.DB.Raw("SELECT DISTINCT generation FROM tfo_resource_specs WHERE tfo_resource_uuid = ?", &uuid).Scan(&generation); result.Error != nil {
-		c.AbortWithError(http.StatusNotFound, result.Error)
+		c.JSON(http.StatusNotFound, response(http.StatusNotFound, result.Error.Error(), nil))
 		return
 	}
-	c.JSON(http.StatusOK, &generation)
+	c.JSON(http.StatusOK, response(http.StatusOK, "", generation))
 }
 
 func (h APIHandler) GetUuidByClusterID(c *gin.Context) {

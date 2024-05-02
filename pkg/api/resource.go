@@ -738,8 +738,12 @@ func logs(db *gorm.DB, tfoResourceUUID string, generation string) []TaskLog {
 
 	var logs []TaskLog
 	for _, task := range filteredData {
-		message := ""
-		if result := resourceLog(db, task.UUID).Scan(&message); result.Error == nil {
+		log := struct {
+			Message   string
+			CreatedAt time.Time
+			UpdatedAt time.Time
+		}{}
+		if result := resourceLog(db, task.UUID).Scan(&log); result.Error == nil {
 			taskID := -1
 			switch task.TaskType {
 			case "setup":
@@ -787,12 +791,12 @@ func logs(db *gorm.DB, tfoResourceUUID string, generation string) []TaskLog {
 			}
 			logs = append(logs, TaskLog{
 				UUID:      task.UUID,
-				Message:   message,
+				Message:   log.Message,
 				TaskType:  task.TaskType,
 				Rerun:     task.Rerun,
 				TaskID:    taskID,
-				CreatedAt: task.CreatedAt,
-				UpdatedAt: task.UpdatedAt,
+				CreatedAt: log.CreatedAt,
+				UpdatedAt: log.UpdatedAt,
 			})
 		}
 	}
@@ -815,41 +819,53 @@ func (h APIHandler) getWorkflowInfo(c *gin.Context) {
 	}
 
 	var tfoResourcesData []struct {
-		Name              string `json:"name"`
-		Namespace         string `json:"namespace"`
-		ClusterName       string `json:"cluster_name"`
-		CurrentState      string `json:"state"`
-		UUID              string `json:"uuid"`
-		CurrentGeneration string `json:"current_generation"`
+		Name              string    `json:"name"`
+		Namespace         string    `json:"namespace"`
+		ClusterName       string    `json:"cluster_name"`
+		CurrentState      string    `json:"state"`
+		UUID              string    `json:"uuid"`
+		CurrentGeneration string    `json:"current_generation"`
+		UpdatedAt         time.Time `json:"updated_at"`
+		CreatedAt         time.Time `json:"created_at"`
 	}
 	var tfoResourceSpecsData []struct {
-		ResourceSpec string `json:"resource_spec"`
-		Annotations  string `json:"annotations"`
-		Labels       string `json:"labels"`
+		ResourceSpec string    `json:"resource_spec"`
+		Annotations  string    `json:"annotations"`
+		Labels       string    `json:"labels"`
+		UpdatedAt    time.Time `json:"updated_at"`
+		CreatedAt    time.Time `json:"created_at"`
 	}
 	type task struct {
-		UUID                string `json:"uuid"`
-		TaskType            string `json:"task_type"`
-		Rerun               int    `json:"rerun"`
-		InClusterGeneration string `json:"in_cluster_generation"`
+		UUID                string    `json:"uuid"`
+		TaskType            string    `json:"task_type"`
+		Rerun               int       `json:"rerun"`
+		InClusterGeneration string    `json:"in_cluster_generation"`
+		CreatedAt           time.Time `json:"created_at"`
+		UpdatedAt           time.Time `json:"updated_at"`
 	}
 	var tasks []task
 	var approvals []struct {
-		IsApproved  bool   `json:"is_approved"`
-		TaskPodUUID string `json:"task_pod_uuid"`
+		CreatedAt   time.Time `json:"created_at"`
+		UpdatedAt   time.Time `json:"updated_at"`
+		IsApproved  bool      `json:"is_approved"`
+		TaskPodUUID string    `json:"task_pod_uuid"`
 	}
 
 	type ResponseItem struct {
-		Name              string `json:"name"`
-		Namespace         string `json:"namespace"`
-		ClusterName       string `json:"cluster_name"`
-		CurrentState      string `json:"state"`
-		UUID              string `json:"uuid"`
-		QueryGeneration   string `json:"query_generation"`
-		CurrentGeneration string `json:"current_generation"`
-		ResourceSpec      string `json:"resource_spec"`
-		Annotations       string `json:"annotations"`
-		Labels            string `json:"labels"`
+		Name                  string    `json:"name"`
+		Namespace             string    `json:"namespace"`
+		ClusterName           string    `json:"cluster_name"`
+		CurrentState          string    `json:"state"`
+		UUID                  string    `json:"uuid"`
+		QueryGeneration       string    `json:"query_generation"`
+		CurrentGeneration     string    `json:"current_generation"`
+		ResourceSpec          string    `json:"resource_spec"`
+		Annotations           string    `json:"annotations"`
+		Labels                string    `json:"labels"`
+		UpdatedAt             time.Time `json:"updated_at"`
+		CreatedAt             time.Time `json:"created_at"`
+		ResourceSpecCreatedAt time.Time `json:"resource_spec_created_at"`
+		ResourceSpecUpdatedAt time.Time `json:"resource_spec_updated_at"`
 
 		Tasks      []task `json:"tasks"`
 		IsApproved *bool  `json:"is_approved"`
@@ -878,6 +894,8 @@ func (h APIHandler) getWorkflowInfo(c *gin.Context) {
 	finalResult[0].CurrentGeneration = tfoResourcesData[0].CurrentGeneration
 	finalResult[0].QueryGeneration = generation
 	finalResult[0].UUID = resourceUUID
+	finalResult[0].CreatedAt = tfoResourcesData[0].CreatedAt
+	finalResult[0].UpdatedAt = tfoResourcesData[0].UpdatedAt
 
 	queryResult = resourceSpec(h.DB, resourceUUID, generation).Scan(&tfoResourceSpecsData)
 	if queryResult.Error != nil {
@@ -892,6 +910,8 @@ func (h APIHandler) getWorkflowInfo(c *gin.Context) {
 	finalResult[0].ResourceSpec = tfoResourceSpecsData[0].ResourceSpec
 	finalResult[0].Annotations = tfoResourceSpecsData[0].Annotations
 	finalResult[0].Labels = tfoResourceSpecsData[0].Labels
+	finalResult[0].ResourceSpecCreatedAt = tfoResourceSpecsData[0].CreatedAt
+	finalResult[0].ResourceSpecUpdatedAt = tfoResourceSpecsData[0].UpdatedAt
 
 	queryResult = allTasksGeneratedForResource(h.DB, resourceUUID, generation).Scan(&tasks)
 	if queryResult.Error != nil {

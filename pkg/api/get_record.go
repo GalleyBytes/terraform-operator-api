@@ -731,8 +731,22 @@ func (h APIHandler) Debugger(c *gin.Context) {
 		return
 	}
 	defer conn.Close()
+	var command []string
 
-	podExecReadWriter, err := New(h.clientset, clusterName, namespace, name, c, cmd)
+	execCommand := []string{
+		"/bin/bash",
+		"-c",
+		`cd $TFO_MAIN_MODULE && \
+			export PS1="\\w\\$ " && \
+			if [[ -n "$AWS_WEB_IDENTITY_TOKEN_FILE" ]]; then
+				export $(irsa-tokengen);
+				echo printf "\nAWS creds set from token file\n"
+			fi && \
+			printf "\nTry running 'terraform init'\n\n" && bash
+		`,
+	}
+
+	podExecReadWriter, err := New(h.clientset, clusterName, namespace, name, c, cmd, command, execCommand, false, true)
 	if err != nil {
 		log.Printf("Failed to connect to debug pod: %s", err)
 		return
@@ -779,6 +793,55 @@ func (h APIHandler) Debugger(c *gin.Context) {
 	}
 
 	// return
+}
+
+func (h APIHandler) UnlockTFO(c *gin.Context) {
+	clusterName := c.Param("cluster_name")
+	clusterID := h.getClusterID(clusterName)
+	if clusterID == 0 {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("cluster_name '%s' not found", clusterName), nil))
+		return
+	}
+	name := c.Param("name")
+	namespace := c.Param("namespace")
+	if _, err := getResource(h.clientset, clusterName, namespace, name, c); err != nil {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("tf resource '%s/%s' not found", namespace, name), nil))
+		return
+	}
+
+	cmd := []string{}
+
+	command := []string{
+		"/bin/bash",
+		"-c",
+		`cd $TFO_MAIN_MODULE && \
+		file=$(mktemp) && \
+		terraform plan -no-color 2>$file
+		if [[ ! -s "$file" ]] ; then
+          echo "\nno lock detected exiting"
+          exit 0
+		fi && \
+		cat $file
+		lock=$(grep -A1 "Lock Info" $file | grep "ID") && \
+		lock_id=$(echo $lock | sed -n 's/.*\([0-9a-fA-F-]\{36\}\).*/\1/p') && \
+		echo lock=$lock && \
+		echo lock_id=$lock_id && \
+		if [ -n "$lock_id" ]; then
+		terraform force-unlock -force $lock_id
+		fi && \
+		echo "Done"`,
+	}
+
+	execCommand := []string{}
+
+	_, err := New(h.clientset, clusterName, namespace, name, c, cmd, command, execCommand, true, false)
+	if err != nil {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("tfo unlock failed: %s", err), nil))
+		return
+	}
+
+	c.JSON(http.StatusOK, response(http.StatusOK, fmt.Sprint("tfo unlocked"), nil))
+
 }
 
 type wsWrapper struct {
@@ -861,7 +924,7 @@ func (t TermSizer) Next() *remotecommand.TerminalSize {
 // }
 
 // command string, argv []string, headers map[string][]string, options ...Option
-func New(clientset kubernetes.Interface, clusterName, namespace, name string, c *gin.Context, cmd []string) (*PodExec, error) {
+func New(clientset kubernetes.Interface, clusterName, namespace, name string, c *gin.Context, cmd, command, execCommand []string, isUnlock, isGoroutine bool) (*PodExec, error) {
 	pty, tty, err := ptylib.Open()
 	if err != nil {
 		log.Fatal(err)
@@ -877,12 +940,26 @@ func New(clientset kubernetes.Interface, clusterName, namespace, name string, c 
 		SizeCh: sizeCh,
 	}
 
-	go func() {
-		defer pty.Close()
-		err := RemoteDebug(clientset, clusterName, namespace, name, tty, c, termSizer, cmd)
+	if isGoroutine {
+		go func() {
+			defer pty.Close()
+			err := RemoteDebug(clientset, clusterName, namespace, name, tty, c, termSizer, cmd, command, execCommand, isUnlock)
+			log.Println("Pod exec exited")
+			closeCh <- err
+		}()
+	} else {
+		err = RemoteDebug(clientset, clusterName, namespace, name, tty, c, termSizer, cmd, command, execCommand, isUnlock)
 		log.Println("Pod exec exited")
-		closeCh <- err
-	}()
+		if err != nil {
+			return &PodExec{
+				pty:       pty,
+				reader:    pty,
+				writer:    pty,
+				termSizer: termSizer,
+				Closer:    closeCh,
+			}, err
+		}
+	}
 
 	return &PodExec{
 		pty:       pty,
@@ -930,7 +1007,7 @@ func (p *PodExec) Close() error {
 
 // RemoteDebug starts the debug pod and connects in a tty that will be synced thru a websocket. Anything written to
 // stdout will be synced to the tty. stderr logs will show up in the api logs and not the tty.
-func RemoteDebug(parentClientset kubernetes.Interface, clusterName, namespace, name string, tty *os.File, c *gin.Context, terminalSizeQueue remotecommand.TerminalSizeQueue, cmd []string) error {
+func RemoteDebug(parentClientset kubernetes.Interface, clusterName, namespace, name string, tty *os.File, c *gin.Context, terminalSizeQueue remotecommand.TerminalSizeQueue, cmd, command, execCommand []string, isUnlock bool) error {
 
 	config, err := getVclusterConfig(parentClientset, "internal", clusterName)
 	if err != nil {
@@ -948,12 +1025,21 @@ func RemoteDebug(parentClientset kubernetes.Interface, clusterName, namespace, n
 	if err != nil {
 		return err
 	}
+	pod := generatePod(tf, command)
 
-	pod := generatePod(tf)
 	pod, err = podClient.Create(c, pod, metav1.CreateOptions{})
 	if err != nil {
 		return err
 	}
+
+	if isUnlock == true {
+		err = getPodStatus(pod, clientset, namespace)
+		if err != nil {
+			return err
+		}
+		return nil
+	}
+
 	defer podClient.Delete(c, pod.Name, metav1.DeleteOptions{})
 
 	fmt.Printf("Connecting to %s ", pod.Name)
@@ -1001,18 +1087,6 @@ func RemoteDebug(parentClientset kubernetes.Interface, clusterName, namespace, n
 	}
 	// log.Println(file.Name())
 	// log.Println("Setting up request")
-	execCommand := []string{
-		"/bin/bash",
-		"-c",
-		`cd $TFO_MAIN_MODULE && \
-			export PS1="\\w\\$ " && \
-			if [[ -n "$AWS_WEB_IDENTITY_TOKEN_FILE" ]]; then
-				export $(irsa-tokengen);
-				echo printf "\nAWS creds set from token file\n"
-			fi && \
-			printf "\nTry running 'terraform init'\n\n" && bash
-		`,
-	}
 
 	if len(cmd) > 0 {
 		execCommand = cmd
@@ -1061,6 +1135,60 @@ func RemoteDebug(parentClientset kubernetes.Interface, clusterName, namespace, n
 	return nil
 }
 
+func getPodStatus(pod *corev1.Pod, clientset *kubernetes.Clientset, namespace string) error {
+	podStatusStartTime := time.Now()
+	for {
+		pod, err := clientset.CoreV1().Pods(namespace).Get(context.TODO(), pod.Name, metav1.GetOptions{})
+		if err != nil {
+			return err
+		}
+		phase := pod.Status.Phase
+		if phase == "Succeeded" {
+			err := deletePod(namespace, pod.Name, clientset)
+			if err != nil {
+				return err
+			}
+			return nil
+		} else if phase == "Failed" {
+			err := deletePod(namespace, pod.Name, clientset)
+			if err != nil {
+				return err
+			}
+			return fmt.Errorf("Pod failed: phase %s", phase)
+		}
+		time.Sleep(5 * time.Second)
+		isDeleted, err := podTimeToLive(podStatusStartTime, pod.Name, namespace, clientset, 300)
+		if err != nil {
+			return err
+		}
+		if isDeleted == true {
+			return fmt.Errorf("Pod did not complete in time and was forcefully deleted")
+		}
+
+	}
+
+}
+
+func deletePod(namespace, podName string, clientset *kubernetes.Clientset) error {
+	err := clientset.CoreV1().Pods(namespace).Delete(context.TODO(), podName, metav1.DeleteOptions{})
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func podTimeToLive(podStatusStartTime time.Time, podName, namespace string, clientset *kubernetes.Clientset, timeToLive time.Duration) (bool, error) {
+	var deleteCompleted = false
+	if time.Since(podStatusStartTime) >= timeToLive*time.Second {
+		err := deletePod(namespace, podName, clientset)
+		if err != nil {
+			return deleteCompleted, err
+		}
+		deleteCompleted = true
+	}
+	return deleteCompleted, nil
+}
+
 // func isTerminal(file *os.File) bool {
 
 // 	inFd := file.Fd()
@@ -1070,7 +1198,7 @@ func RemoteDebug(parentClientset kubernetes.Interface, clusterName, namespace, n
 
 // }
 
-func generatePod(tf *tfv1beta1.Terraform) *corev1.Pod {
+func generatePod(tf *tfv1beta1.Terraform, command []string) *corev1.Pod {
 	terraformVersion := tf.Spec.TerraformVersion
 	if terraformVersion == "" {
 		terraformVersion = "1.1.5"
@@ -1230,13 +1358,17 @@ func generatePod(tf *tfv1beta1.Terraform) *corev1.Pod {
 	}
 	restartPolicy := corev1.RestartPolicyNever
 
+	if command == nil {
+		command = []string{
+			"/bin/sleep", "86400",
+		}
+	}
+
 	containers = append(containers, corev1.Container{
 		SecurityContext: securityContext,
 		Name:            "debug",
 		Image:           "ghcr.io/galleybytes/terraform-operator-tftaskv1.1.0:" + terraformVersion,
-		Command: []string{
-			"/bin/sleep", "86400",
-		},
+		Command:         command,
 		ImagePullPolicy: corev1.PullIfNotPresent,
 		EnvFrom:         envFrom,
 		Env:             env,

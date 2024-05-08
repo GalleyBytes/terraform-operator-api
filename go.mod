@@ -3,8 +3,8 @@ module github.com/galleybytes/terraform-operator-api
 go 1.19
 
 require (
+	github.com/akyoto/cache v1.0.6
 	github.com/galleybytes/terraform-operator v0.14.0
-	github.com/gammazero/deque v0.2.1
 	github.com/gin-gonic/gin v1.8.1
 	github.com/golang-jwt/jwt/v4 v4.4.3
 	github.com/isaaguilar/kedge v0.0.0-20230623005919-25931c711d84
@@ -19,7 +19,6 @@ require (
 require (
 	github.com/Azure/go-ansiterm v0.0.0-20210617225240-d185dfc1b5a1 // indirect
 	github.com/MakeNowJust/heredoc v1.0.0 // indirect
-	github.com/akyoto/cache v1.0.6 // indirect
 	github.com/beevik/etree v1.1.0 // indirect
 	github.com/chai2010/gettext-go v1.0.2 // indirect
 	github.com/crewjam/httperr v0.2.0 // indirect
@@ -40,7 +39,6 @@ require (
 	github.com/moby/term v0.0.0-20221205130635-1aeaba878587 // indirect
 	github.com/monochromegane/go-gitignore v0.0.0-20200626010858-205db1a8cc00 // indirect
 	github.com/peterbourgon/diskv v2.0.1+incompatible // indirect
-	github.com/pmezard/go-difflib v1.0.0 // indirect
 	github.com/russellhaering/goxmldsig v1.2.0 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect
 	github.com/spf13/cobra v1.6.0 // indirect
@@ -96,7 +94,6 @@ require (
 )
 
 require (
-	github.com/DATA-DOG/go-sqlmock v1.5.0
 	github.com/creack/pty v1.1.18
 	github.com/crewjam/saml v0.4.13
 	github.com/fsnotify/fsnotify v1.6.0 // indirect
@@ -131,7 +128,7 @@ require (
 	github.com/spf13/cast v1.5.0 // indirect
 	github.com/spf13/jwalterweatherman v1.1.0 // indirect
 	github.com/spf13/pflag v1.0.5
-	github.com/stretchr/testify v1.8.4
+	github.com/stretchr/testify v1.8.4 // indirect
 	github.com/subosito/gotenv v1.4.1 // indirect
 	github.com/ucarion/saml v0.1.2
 	github.com/ugorji/go/codec v1.2.7 // indirect

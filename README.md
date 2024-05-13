@@ -28,7 +28,7 @@ Before running the server, make sure you have the following prerequisites instal
 
 ### Environment Variables
 
-Create a `.env` file in the project root directory with the following environment variables:
+Export the following environment variables
 
 - `KUBECONFIG`: The kubernetes cluster API config (In-cluster is used when running in a Kubernetes pod)
 - `ADDR`: The address on which the server will listen (default: `0.0.0.0:3000`)

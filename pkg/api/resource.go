@@ -21,6 +21,7 @@ import (
 	tfv1beta1 "github.com/galleybytes/terraform-operator/pkg/apis/tf/v1beta1"
 	tfo "github.com/galleybytes/terraform-operator/pkg/client/clientset/versioned"
 	"github.com/gin-gonic/gin"
+	"github.com/golang-jwt/jwt/v4"
 	"github.com/gorilla/websocket"
 	"github.com/isaaguilar/kedge"
 	"gopkg.in/yaml.v3"
@@ -32,10 +33,13 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	k8sjson "k8s.io/apimachinery/pkg/runtime/serializer/json"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
 )
+
+var VCLUSTER_DEBUG_HOST string = os.Getenv("TFO_API_VCLUSTER_DEBUG_HOST")
 
 //go:embed manifests/vcluster.tpl.yaml
 var defaultVirtualClusterManifestTemplate string
@@ -1295,6 +1299,9 @@ func getVclusterConfig(clientset kubernetes.Interface, tenantId, clusterName str
 	// CertData and CertFile which are used as authorization to the vcluster.
 	config := kedge.KubernetesConfig(kubeConfigFilename.Name())
 	config.Host = fmt.Sprintf("tfo-virtual-cluster.%s.svc", namespace)
+	if VCLUSTER_DEBUG_HOST != "" {
+		config.Host = VCLUSTER_DEBUG_HOST
+	}
 	config.Insecure = true
 	config.TLSClientConfig.CAData = nil
 	return config, nil
@@ -1308,6 +1315,7 @@ func (h APIHandler) ResourceEvent(c *gin.Context) {
 			c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
 			return
 		} else if msg != "" {
+			// TODO The addResource returning a msg is unnessesary. Why not redirect to a PUT request instead?
 			c.JSON(http.StatusOK, response(http.StatusOK, msg, []string{}))
 			return
 		}
@@ -1397,9 +1405,12 @@ func (h APIHandler) addResource(c *gin.Context) (string, error) {
 	}
 
 	apiURL := GetApiURL(c, h.serviceIP)
-	token := FetchToken(h.DB, *tfoResourceSpec, h.tenant, clusterName, apiURL)
+	_, err = NewTaskToken(h.DB, *tfoResourceSpec, h.tenant, clusterName, apiURL, h.clientset)
+	if err != nil {
+		return "", err
+	}
 	appendClusterNameLabel(&jsonData.Terraform, cluster.Name)
-	addOriginEnvs(&jsonData.Terraform, h.tenant, clusterName, apiURL, token)
+	addOriginEnvs(&jsonData.Terraform, h.tenant, clusterName, apiURL)
 
 	err = applyOnCreateOrUpdate(c, jsonData.Terraform, h.clientset, h.tenant)
 	if err != nil {
@@ -1409,6 +1420,7 @@ func (h APIHandler) addResource(c *gin.Context) (string, error) {
 	return "", nil
 }
 
+// updateResource updates the resource in the vcluster and the database
 func (h APIHandler) updateResource(c *gin.Context) error {
 	clusterName := c.Param("cluster_name")
 	clusterID := h.getClusterID(clusterName)
@@ -1445,7 +1457,7 @@ func (h APIHandler) updateResource(c *gin.Context) error {
 		return fmt.Errorf("error getting cluster: %v", result.Error)
 	}
 
-	// new resources must not already exist in the database
+	// looking for the resource in the database to update
 	tfoResourceFromDatabase := models.TFOResource{}
 	result = h.DB.Where("uuid = ?", tfoResource.UUID).First(&tfoResourceFromDatabase)
 	if result.Error != nil {
@@ -1453,6 +1465,7 @@ func (h APIHandler) updateResource(c *gin.Context) error {
 		return fmt.Errorf("error getting tfoResource: %v", result.Error)
 	}
 
+	// Generation lookups are done from the origin resource and not the generation in the vcluster.
 	gen1 := tfoResource.CurrentGeneration
 	gen2 := tfoResourceFromDatabase.CurrentGeneration
 	if compare(gen1, "<", gen2) {
@@ -1460,11 +1473,12 @@ func (h APIHandler) updateResource(c *gin.Context) error {
 	}
 
 	if compare(gen1, ">", gen2) {
+		// Reset the state of the resource because this is a new generation of the resource spec
 		tfoResourceFromDatabase.CurrentState = models.Untracked
 		tfoResourceFromDatabase.CurrentGeneration = tfoResource.CurrentGeneration
 	}
 
-	result = h.DB.Save(&tfoResourceFromDatabase)
+	result = h.DB.Save(&tfoResourceFromDatabase) // Updates database state with any generation changes
 	if result.Error != nil {
 		return result.Error
 	}
@@ -1487,9 +1501,12 @@ func (h APIHandler) updateResource(c *gin.Context) error {
 	}
 
 	apiURL := GetApiURL(c, h.serviceIP)
-	token := FetchToken(h.DB, tfoResourceSpecFromDatabase, h.tenant, clusterName, apiURL)
+	_, err = NewTaskToken(h.DB, tfoResourceSpecFromDatabase, h.tenant, clusterName, apiURL, h.clientset)
+	if err != nil {
+		return err
+	}
 	appendClusterNameLabel(&jsonData.Terraform, clusterName)
-	addOriginEnvs(&jsonData.Terraform, h.tenant, clusterName, apiURL, token)
+	addOriginEnvs(&jsonData.Terraform, h.tenant, clusterName, apiURL)
 
 	err = applyOnCreateOrUpdate(c, jsonData.Terraform, h.clientset, h.tenant)
 	if err != nil {
@@ -1526,27 +1543,171 @@ func deleteTFOResourcesExceptNewest(db *gorm.DB, tfoResource *models.TFOResource
 	return nil
 }
 
-func FetchToken(db *gorm.DB, tfoResourceSpec models.TFOResourceSpec, tenant, clusterName, apiURL string) string {
-
+// Generate a new JWT Token and Refresh Token. Saves the token into the database and creats a Secret in the
+// tasks namespace inside the vcluster. The secrets is to be used with envFrom inside the task pods.
+//
+// The generated name is the resourceName + "-jwt".
+func NewTaskToken(db *gorm.DB, tfoResourceSpec models.TFOResourceSpec, _tenantID, clusterName, apiURL string, clientset kubernetes.Interface) (*string, error) {
+	// tenantID is totally broken right now. Just hardcode this for now
+	tenantID := "internal"
+	var token string
+	var tfoResource models.TFOResource
+	var version int
+	tfoResourceSpecID := tfoResourceSpec.ID
 	generation := tfoResourceSpec.Generation
 	resourceUUID := tfoResourceSpec.TFOResourceUUID
-	token := tfoResourceSpec.TaskToken
 
-	if token == "" {
-		t, err := generateTaskJWT(resourceUUID, tenant, clusterName, generation)
-		if err != nil {
-			log.Printf("Failed to generate taskJWT: %s", err)
-		} else {
-			token = t
-			tfoResourceSpec.TaskToken = token
-			result := db.Save(&tfoResourceSpec)
-			if result.Error != nil {
-				log.Printf("Failed to save task_token to tfo_resource_specs: %s", result.Error.Error())
+	token, refreshToken, err := generateTaskJWT(resourceUUID, tenantID, clusterName, generation)
+	if err != nil {
+		// TODO
+		//    TFO-API should make having a valid token part of saving to the cluster.
+		//    Then the execution of the terraform should use the token to validate before running.
+		return nil, fmt.Errorf("failed to generate taskJWT: %s", err)
+
+	} else {
+		result := db.Raw("SELECT * FROM tfo_resources WHERE uuid = ?", tfoResourceSpec.TFOResourceUUID).Scan(&tfoResource)
+		if result.Error != nil {
+			return nil, fmt.Errorf("failed to find TFO Resource: %s", result.Error)
+		}
+
+		result = db.Exec("UPDATE refresh_tokens SET canceled_at = ?, canceled_reason = 'NEW_TOKEN_GENERATION' WHERE tfo_resource_spec_id = ?", time.Now(), tfoResourceSpecID)
+		if result.Error != nil {
+			return nil, fmt.Errorf("failed to invalidate previous tokens: %s", result.Error)
+		}
+
+		_ = db.Table("refresh_tokens").Select("max(version)").Where("tfo_resource_spec_id = ?", tfoResourceSpecID).Scan(&version)
+		if result.Error != nil {
+			if !errors.Is(result.Error, gorm.ErrModelValueRequired) && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
+				return nil, fmt.Errorf("failed to get previous token version: %s", result.Error)
 			}
+		}
+
+		refreshToken := models.RefreshToken{
+			RefreshToken:      refreshToken,
+			Version:           version + 1,
+			UsedAt:            nil,
+			CanceledAt:        nil,
+			ReUsedAt:          nil,
+			TFOResourceSpecID: tfoResourceSpec.ID,
+		}
+
+		result = db.Save(&refreshToken)
+		if result.Error != nil {
+			return nil, fmt.Errorf("failed to save refresh_token to database: %s", result.Error)
+
 		}
 	}
 
-	return token
+	config, err := getVclusterConfig(clientset, tenantID, clusterName)
+	if err != nil {
+		return nil, fmt.Errorf("error occurred getting vcluster config for %s-%s %s/%s: %s", tenantID, clusterName, tfoResource.Namespace, tfoResource.Name, err)
+	}
+	vclusterClient := kubernetes.NewForConfigOrDie(config)
+
+	// generate a secret manifest for the jwt token
+	secretName := util.Trunc(tfoResource.Name, 249) + "-jwt"
+	secretConfig := corev1.Secret{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      secretName,
+			Namespace: tfoResource.Namespace,
+			OwnerReferences: []metav1.OwnerReference{
+				{
+					APIVersion:         string("tf.galleybytes.com/v1beta1"),
+					Kind:               string("Terraform"),
+					Name:               tfoResource.Name,
+					UID:                types.UID(tfoResource.UUID),
+					Controller:         newTrue(),
+					BlockOwnerDeletion: newTrue(),
+				},
+			},
+		},
+
+		StringData: map[string]string{
+			"TFO_API_LOG_TOKEN": token,
+			"REFRESH_TOKEN":     refreshToken,
+		},
+		Type: corev1.SecretTypeOpaque,
+	}
+
+	_, err = vclusterClient.CoreV1().Secrets(tfoResource.Namespace).Create(context.TODO(), &secretConfig, metav1.CreateOptions{
+		FieldManager: "tfoapi",
+	})
+	if err != nil {
+		if !kerrors.IsAlreadyExists(err) {
+			return nil, fmt.Errorf("failed to create secret: %s", err)
+		}
+		patch := []byte(fmt.Sprintf(`[
+			{"op": "replace", "path": "/data/TFO_API_LOG_TOKEN", "value": "%s"},
+			{"op": "replace", "path": "/data/REFRESH_TOKEN", "value": "%s"}
+		]`, util.B64Encode(token), util.B64Encode(refreshToken)))
+		_, err := vclusterClient.CoreV1().Secrets(tfoResource.Namespace).Patch(context.TODO(), secretName, types.JSONPatchType, patch, metav1.PatchOptions{})
+		if err != nil {
+			return nil, fmt.Errorf("failed to patch secret: %s", err)
+		}
+	}
+
+	return &token, nil
+}
+
+func newTrue() *bool { b := true; return &b }
+
+func NewTaskTokenFromRefreshToken(db *gorm.DB, refreshToken, apiURL string, clientset kubernetes.Interface) (string, error) {
+	var data struct {
+		models.RefreshToken
+		models.TFOResourceSpec
+		models.TFOResource
+		models.Cluster
+	}
+
+	_, err := doValidation(refreshToken)
+	if err != nil {
+		return "", fmt.Errorf("failed to validate token: %s", err)
+	}
+	var tfoOriginUUID string
+
+	jwt.Parse(refreshToken, func(t *jwt.Token) (interface{}, error) {
+		claims := t.Claims.(jwt.MapClaims)
+		tfoOriginUUID = claims["username"].(string)
+		return nil, nil
+	})
+
+	if tfoOriginUUID == "" {
+		return "", fmt.Errorf("invalid token claims")
+	}
+
+	query := fmt.Sprintf(`
+		SELECT * FROM refresh_tokens
+		JOIN tfo_resource_specs
+			ON tfo_resource_specs.id = refresh_tokens.tfo_resource_spec_id
+		JOIN tfo_resources
+			ON tfo_resources.uuid = tfo_resource_specs.tfo_resource_uuid
+		JOIN clusters
+			ON clusters.id = tfo_resources.cluster_id
+		WHERE tfo_resource_specs.tfo_resource_uuid = '%s'
+		AND refresh_tokens.canceled_at IS NULL
+		AND refresh_tokens.version = (
+			SELECT MAX(version) FROM refresh_tokens
+			JOIN tfo_resource_specs
+				ON tfo_resource_specs.id = refresh_tokens.tfo_resource_spec_id
+			WHERE tfo_resource_specs.tfo_resource_uuid = '%s'
+		)
+	`, tfoOriginUUID, tfoOriginUUID)
+
+	result := db.Raw(query).Scan(&data)
+	if result.Error != nil {
+		return "", result.Error
+	}
+
+	if refreshToken != data.RefreshToken.RefreshToken {
+		return "", fmt.Errorf("invalid refresh token")
+	}
+
+	token, err := NewTaskToken(db, data.TFOResourceSpec, "", data.Cluster.Name, apiURL, clientset)
+	if err != nil {
+		return "", err
+	}
+
+	return *token, nil
 }
 
 func GetApiURL(c *gin.Context, serviceIP *string) string {
@@ -1593,11 +1754,21 @@ func appendClusterNameLabel(tf *tfv1beta1.Terraform, clusterName string) {
 }
 
 // addOriginEnvs will inject TFO_ORIGIN envs to the incoming resource
-func addOriginEnvs(tf *tfv1beta1.Terraform, tenant, clusterName, apiURL, token string) {
+func addOriginEnvs(tf *tfv1beta1.Terraform, tenant, clusterName, apiURL string) {
 	generation := fmt.Sprintf("%d", tf.Generation)
 	resourceUUID := string(tf.UID)
 	tf.Spec.TaskOptions = append(tf.Spec.TaskOptions, tfv1beta1.TaskOption{
 		For: []tfv1beta1.TaskName{"*"},
+		EnvFrom: []corev1.EnvFromSource{
+			{
+				SecretRef: &corev1.SecretEnvSource{
+					LocalObjectReference: corev1.LocalObjectReference{
+						Name: util.Trunc(tf.Name, 249) + "-jwt",
+					},
+					Optional: new(bool),
+				},
+			},
+		},
 		Env: []corev1.EnvVar{
 			{
 				Name:  "TFO_ORIGIN_UUID",
@@ -1606,10 +1777,6 @@ func addOriginEnvs(tf *tfv1beta1.Terraform, tenant, clusterName, apiURL, token s
 			{
 				Name:  "TFO_ORIGIN_GENERATION",
 				Value: generation,
-			},
-			{
-				Name:  "TFO_API_LOG_TOKEN",
-				Value: token,
 			},
 			{
 				Name:  "TFO_API_URL",

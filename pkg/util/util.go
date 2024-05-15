@@ -1,8 +1,10 @@
 package util
 
 import (
+	"encoding/base64"
 	"os"
 	"reflect"
+	"strings"
 )
 
 func Tmpdir() string {
@@ -22,4 +24,21 @@ func Contains[T any](things []T, thing T) bool {
 		}
 	}
 	return false
+}
+
+// Truncate an already valid resource name
+// With valid resource names, it is safe to assume only contains dashes (dots?)
+func Trunc(s string, n uint) string {
+	if len(s) > int(n) {
+		s = s[:n]
+		// TODO fix naive approach of sanitizing
+		s = strings.TrimRight(s, "-")
+		s = strings.TrimRight(s, ".")
+	}
+	return s
+}
+
+func B64Encode(input string) string {
+	encoded := base64.StdEncoding.EncodeToString([]byte(input))
+	return encoded
 }

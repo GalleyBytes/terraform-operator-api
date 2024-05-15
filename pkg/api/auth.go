@@ -56,22 +56,29 @@ func validateJwt(c *gin.Context) {
 		unauthorized(c, err.Error())
 	}
 
-	token, err := jwt.Parse(userProvidedJWT, func(token *jwt.Token) (interface{}, error) {
+	_, err = doValidation(userProvidedJWT)
+	if err != nil {
+		unauthorized(c, err.Error())
+		return
+	}
+}
+
+func doValidation(jwtToken string) (*jwt.Token, error) {
+	token, err := jwt.Parse(jwtToken, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("there was an error in parsing")
 		}
 		return []byte(jwtSigningKey), nil
 	})
-
 	if err != nil {
-		unauthorized(c, err.Error())
-		return
+		return nil, err
 	}
 
 	if token == nil {
-		unauthorized(c, "invalid token")
-		return
+		return nil, fmt.Errorf("invalid token")
 	}
+
+	return token, nil
 }
 
 func (h APIHandler) login(c *gin.Context) {
@@ -94,7 +101,7 @@ func (h APIHandler) login(c *gin.Context) {
 		return
 	}
 
-	token, err := generateJWT(jsonData.Username)
+	token, err := generateJWT(jsonData.Username, 12)
 	if err != nil {
 		unauthorized(c, fmt.Sprintf("Error issuing JWT: %s", err.Error()))
 		return
@@ -103,13 +110,31 @@ func (h APIHandler) login(c *gin.Context) {
 	c.JSON(http.StatusOK, response(http.StatusOK, "", []string{token}))
 }
 
-func generateJWT(username string) (string, error) {
+func (h APIHandler) loginWithRefreshToken(c *gin.Context) {
+	jsonData := struct {
+		RefreshToken string `json:"refresh_token"`
+	}{}
+	err := c.BindJSON(&jsonData)
+	if err != nil {
+		unauthorized(c, fmt.Sprintf("Error paring data: %s", err.Error()))
+		return
+	}
+
+	token, err := NewTaskTokenFromRefreshToken(h.DB, jsonData.RefreshToken, GetApiURL(c, h.serviceIP), h.clientset)
+	if err != nil {
+		unauthorized(c, fmt.Sprintf("Error issuing JWT: %s", err.Error()))
+		return
+	}
+
+	c.JSON(http.StatusOK, response(http.StatusOK, "", []string{token}))
+}
+
+func generateJWT(username string, durationHours time.Duration) (string, error) {
 	token := jwt.New(jwt.SigningMethodHS256)
 	claims := token.Claims.(jwt.MapClaims)
 
-	claims["authorized"] = true
 	claims["username"] = username
-	claims["exp"] = time.Now().Add(time.Hour * 12).Unix()
+	claims["exp"] = time.Now().Add(time.Hour * durationHours).Unix()
 
 	tokenString, err := token.SignedString([]byte(jwtSigningKey))
 
@@ -174,7 +199,7 @@ func (h APIHandler) samlConnecter(c *gin.Context) {
 		return
 	}
 
-	jwtToken, err := generateJWT(username)
+	jwtToken, err := generateJWT(username, 12)
 	if err != nil {
 		c.AbortWithError(http.StatusNotAcceptable, err)
 		return
@@ -224,10 +249,15 @@ func fetchIDPCertificate(metadataURL string) (*x509.Certificate, error) {
 // can be removed for a better method soon.
 //
 // Grant 30 days of access per issued token.
-func generateTaskJWT(resourceUUID, tenant, clientName, generation string) (string, error) {
+func generateTaskJWT(resourceUUID, tenant, clientName, generation string) (string, string, error) {
 	token := jwt.New(jwt.SigningMethodHS256)
 	claims := token.Claims.(jwt.MapClaims)
 
+	refreshToken, err := generateJWT(resourceUUID, 17520) // 2 years
+	if err != nil {
+		return "", "", fmt.Errorf("Could not generate refresh token: %s", err.Error())
+	}
+	claims["refresh_token"] = refreshToken
 	claims["exp"] = time.Now().Add(time.Hour * 720).Unix()
 	claims["authorized"] = true
 	claims["resourceUUID"] = resourceUUID
@@ -236,9 +266,9 @@ func generateTaskJWT(resourceUUID, tenant, clientName, generation string) (strin
 	tokenString, err := token.SignedString([]byte(jwtSigningKey))
 
 	if err != nil {
-		return "", fmt.Errorf("something went wrong: %s", err.Error())
+		return "", "", fmt.Errorf("something went wrong: %s", err.Error())
 	}
-	return tokenString, nil
+	return tokenString, refreshToken, nil
 }
 
 // Check that the  taskJWT is correctly formatted with all the claim fields defined

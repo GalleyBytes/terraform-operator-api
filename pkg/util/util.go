@@ -5,6 +5,8 @@ import (
 	"os"
 	"reflect"
 	"strings"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 func Tmpdir() string {
@@ -41,4 +43,14 @@ func Trunc(s string, n uint) string {
 func B64Encode(input string) string {
 	encoded := base64.StdEncoding.EncodeToString([]byte(input))
 	return encoded
+}
+
+func HashPassword(password string) (string, error) {
+	bytes, err := bcrypt.GenerateFromPassword([]byte(password), 14)
+	return string(bytes), err
+}
+
+func CheckPasswordHash(password, hash string) bool {
+	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+	return err == nil
 }

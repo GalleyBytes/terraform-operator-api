@@ -1582,8 +1582,18 @@ func NewTaskToken(db *gorm.DB, tfoResourceSpec models.TFOResourceSpec, _tenantID
 			}
 		}
 
+		token, err := doValidation(refreshToken)
+		if err != nil {
+			return nil, fmt.Errorf("failed to validate token: %s", err)
+		}
+
+		hash, err := util.HashPassword(token.Signature)
+		if err != nil {
+			return nil, fmt.Errorf("failed to hash token for storage: %s", err)
+		}
+
 		refreshToken := models.RefreshToken{
-			RefreshToken:      refreshToken,
+			RefreshToken:      hash,
 			Version:           version + 1,
 			UsedAt:            nil,
 			CanceledAt:        nil,
@@ -1659,11 +1669,15 @@ func NewTaskTokenFromRefreshToken(db *gorm.DB, refreshToken, apiURL string, clie
 		models.Cluster
 	}
 
-	_, err := doValidation(refreshToken)
+	var signature string
+	var tfoOriginUUID string
+
+	parsedToken, err := doValidation(refreshToken)
 	if err != nil {
 		return "", fmt.Errorf("failed to validate token: %s", err)
 	}
-	var tfoOriginUUID string
+
+	signature = parsedToken.Signature
 
 	jwt.Parse(refreshToken, func(t *jwt.Token) (interface{}, error) {
 		claims := t.Claims.(jwt.MapClaims)
@@ -1698,7 +1712,7 @@ func NewTaskTokenFromRefreshToken(db *gorm.DB, refreshToken, apiURL string, clie
 		return "", result.Error
 	}
 
-	if refreshToken != data.RefreshToken.RefreshToken {
+	if !util.CheckPasswordHash(signature, data.RefreshToken.RefreshToken) {
 		return "", fmt.Errorf("invalid refresh token")
 	}
 

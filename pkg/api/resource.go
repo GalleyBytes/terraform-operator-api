@@ -1410,7 +1410,7 @@ func (h APIHandler) addResource(c *gin.Context) (string, error) {
 		return "", err
 	}
 	appendClusterNameLabel(&jsonData.Terraform, cluster.Name)
-	addOriginEnvs(&jsonData.Terraform, h.tenant, clusterName, apiURL)
+	addGlobalTaskOptions(&jsonData.Terraform, h.tenant, clusterName, apiURL)
 
 	err = applyOnCreateOrUpdate(c, jsonData.Terraform, h.clientset, h.tenant)
 	if err != nil {
@@ -1506,7 +1506,7 @@ func (h APIHandler) updateResource(c *gin.Context) error {
 		return err
 	}
 	appendClusterNameLabel(&jsonData.Terraform, clusterName)
-	addOriginEnvs(&jsonData.Terraform, h.tenant, clusterName, apiURL)
+	addGlobalTaskOptions(&jsonData.Terraform, h.tenant, clusterName, apiURL)
 
 	err = applyOnCreateOrUpdate(c, jsonData.Terraform, h.clientset, h.tenant)
 	if err != nil {
@@ -1570,11 +1570,6 @@ func NewTaskToken(db *gorm.DB, tfoResourceSpec models.TFOResourceSpec, _tenantID
 			return nil, fmt.Errorf("failed to find TFO Resource: %s", result.Error)
 		}
 
-		result = db.Exec("UPDATE refresh_tokens SET canceled_at = ?, canceled_reason = 'NEW_TOKEN_GENERATION' WHERE tfo_resource_spec_id = ?", time.Now(), tfoResourceSpecID)
-		if result.Error != nil {
-			return nil, fmt.Errorf("failed to invalidate previous tokens: %s", result.Error)
-		}
-
 		_ = db.Table("refresh_tokens").Select("max(version)").Where("tfo_resource_spec_id = ?", tfoResourceSpecID).Scan(&version)
 		if result.Error != nil {
 			if !errors.Is(result.Error, gorm.ErrModelValueRequired) && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
@@ -1582,14 +1577,62 @@ func NewTaskToken(db *gorm.DB, tfoResourceSpec models.TFOResourceSpec, _tenantID
 			}
 		}
 
-		token, err := doValidation(refreshToken)
+		validatedRefreshtoken, err := doValidation(refreshToken)
 		if err != nil {
 			return nil, fmt.Errorf("failed to validate token: %s", err)
 		}
 
-		hash, err := util.HashPassword(token.Signature)
+		hash, err := util.HashPassword(validatedRefreshtoken.Signature)
 		if err != nil {
 			return nil, fmt.Errorf("failed to hash token for storage: %s", err)
+		}
+
+		config, err := getVclusterConfig(clientset, tenantID, clusterName)
+		if err != nil {
+			return nil, fmt.Errorf("error occurred getting vcluster config for %s-%s %s/%s: %s", tenantID, clusterName, tfoResource.Namespace, tfoResource.Name, err)
+		}
+		vclusterClient := kubernetes.NewForConfigOrDie(config)
+
+		// generate a secret manifest for the jwt token
+		secretName := util.Trunc(tfoResource.Name, 249) + "-jwt"
+		secretConfig := corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      secretName,
+				Namespace: tfoResource.Namespace,
+				OwnerReferences: []metav1.OwnerReference{
+					{
+						APIVersion:         string("tf.galleybytes.com/v1beta1"),
+						Kind:               string("Terraform"),
+						Name:               tfoResource.Name,
+						UID:                types.UID(tfoResource.UUID),
+						Controller:         newTrue(),
+						BlockOwnerDeletion: newTrue(),
+					},
+				},
+			},
+
+			StringData: map[string]string{
+				"TFO_API_LOG_TOKEN": token,
+				"REFRESH_TOKEN":     refreshToken,
+			},
+			Type: corev1.SecretTypeOpaque,
+		}
+
+		_, err = vclusterClient.CoreV1().Secrets(tfoResource.Namespace).Create(context.TODO(), &secretConfig, metav1.CreateOptions{
+			FieldManager: "tfoapi",
+		})
+		if err != nil {
+			if !kerrors.IsAlreadyExists(err) {
+				return nil, fmt.Errorf("failed to create secret: %s", err)
+			}
+			patch := []byte(fmt.Sprintf(`[
+			{"op": "replace", "path": "/data/TFO_API_LOG_TOKEN", "value": "%s"},
+			{"op": "replace", "path": "/data/REFRESH_TOKEN", "value": "%s"}
+		]`, util.B64Encode(token), util.B64Encode(refreshToken)))
+			_, err := vclusterClient.CoreV1().Secrets(tfoResource.Namespace).Patch(context.TODO(), secretName, types.JSONPatchType, patch, metav1.PatchOptions{})
+			if err != nil {
+				return nil, fmt.Errorf("failed to patch secret: %s", err)
+			}
 		}
 
 		refreshToken := models.RefreshToken{
@@ -1601,58 +1644,14 @@ func NewTaskToken(db *gorm.DB, tfoResourceSpec models.TFOResourceSpec, _tenantID
 			TFOResourceSpecID: tfoResourceSpec.ID,
 		}
 
+		result = db.Exec("UPDATE refresh_tokens SET canceled_at = ?, canceled_reason = 'NEW_TOKEN_GENERATION' WHERE tfo_resource_spec_id = ?", time.Now(), tfoResourceSpecID)
+		if result.Error != nil {
+			return nil, fmt.Errorf("failed to invalidate previous tokens: %s", result.Error)
+		}
+
 		result = db.Save(&refreshToken)
 		if result.Error != nil {
 			return nil, fmt.Errorf("failed to save refresh_token to database: %s", result.Error)
-
-		}
-	}
-
-	config, err := getVclusterConfig(clientset, tenantID, clusterName)
-	if err != nil {
-		return nil, fmt.Errorf("error occurred getting vcluster config for %s-%s %s/%s: %s", tenantID, clusterName, tfoResource.Namespace, tfoResource.Name, err)
-	}
-	vclusterClient := kubernetes.NewForConfigOrDie(config)
-
-	// generate a secret manifest for the jwt token
-	secretName := util.Trunc(tfoResource.Name, 249) + "-jwt"
-	secretConfig := corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      secretName,
-			Namespace: tfoResource.Namespace,
-			OwnerReferences: []metav1.OwnerReference{
-				{
-					APIVersion:         string("tf.galleybytes.com/v1beta1"),
-					Kind:               string("Terraform"),
-					Name:               tfoResource.Name,
-					UID:                types.UID(tfoResource.UUID),
-					Controller:         newTrue(),
-					BlockOwnerDeletion: newTrue(),
-				},
-			},
-		},
-
-		StringData: map[string]string{
-			"TFO_API_LOG_TOKEN": token,
-			"REFRESH_TOKEN":     refreshToken,
-		},
-		Type: corev1.SecretTypeOpaque,
-	}
-
-	_, err = vclusterClient.CoreV1().Secrets(tfoResource.Namespace).Create(context.TODO(), &secretConfig, metav1.CreateOptions{
-		FieldManager: "tfoapi",
-	})
-	if err != nil {
-		if !kerrors.IsAlreadyExists(err) {
-			return nil, fmt.Errorf("failed to create secret: %s", err)
-		}
-		patch := []byte(fmt.Sprintf(`[
-			{"op": "replace", "path": "/data/TFO_API_LOG_TOKEN", "value": "%s"},
-			{"op": "replace", "path": "/data/REFRESH_TOKEN", "value": "%s"}
-		]`, util.B64Encode(token), util.B64Encode(refreshToken)))
-		_, err := vclusterClient.CoreV1().Secrets(tfoResource.Namespace).Patch(context.TODO(), secretName, types.JSONPatchType, patch, metav1.PatchOptions{})
-		if err != nil {
-			return nil, fmt.Errorf("failed to patch secret: %s", err)
 		}
 	}
 
@@ -1767,17 +1766,35 @@ func appendClusterNameLabel(tf *tfv1beta1.Terraform, clusterName string) {
 	tf.Labels["tfo-api.galleybytes.com/cluster-name"] = clusterName
 }
 
-// addOriginEnvs will inject TFO_ORIGIN envs to the incoming resource
-func addOriginEnvs(tf *tfv1beta1.Terraform, tenant, clusterName, apiURL string) {
+// addGlobalTaskOptions will inject TFO_ORIGIN envs to the incoming resource
+func addGlobalTaskOptions(tf *tfv1beta1.Terraform, tenant, clusterName, apiURL string) {
+	secretName := util.Trunc(tf.Name, 249) + "-jwt"
 	generation := fmt.Sprintf("%d", tf.Generation)
 	resourceUUID := string(tf.UID)
 	tf.Spec.TaskOptions = append(tf.Spec.TaskOptions, tfv1beta1.TaskOption{
 		For: []tfv1beta1.TaskName{"*"},
+		Volumes: []corev1.Volume{
+			{
+				Name: "jwt",
+				VolumeSource: corev1.VolumeSource{
+					Secret: &corev1.SecretVolumeSource{
+						SecretName: secretName,
+					},
+				},
+			},
+		},
+		VolumeMounts: []corev1.VolumeMount{
+			{
+				Name:      "jwt",
+				ReadOnly:  true,
+				MountPath: "/jwt",
+			},
+		},
 		EnvFrom: []corev1.EnvFromSource{
 			{
 				SecretRef: &corev1.SecretEnvSource{
 					LocalObjectReference: corev1.LocalObjectReference{
-						Name: util.Trunc(tf.Name, 249) + "-jwt",
+						Name: secretName,
 					},
 					Optional: new(bool),
 				},

@@ -21,6 +21,7 @@ func Init(url string) *gorm.DB {
 		&models.TFOResourceSpec{},
 		&models.Approval{},
 		&models.TaskPod{},
+		&models.RefreshToken{},
 	)
 
 	if err != nil {

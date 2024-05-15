@@ -85,6 +85,7 @@ func (h APIHandler) RegisterRoutes() {
 	})
 
 	preauth.POST("/login", h.login)
+	preauth.POST("/refresh", h.loginWithRefreshToken)
 	preauth.GET("/connect", h.defaultConnectMethod) // Determine preferred auth method
 	preauth.GET("/sso", h.ssoRedirecter)
 	preauth.POST("/sso/saml", h.samlConnecter)

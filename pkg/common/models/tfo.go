@@ -67,6 +67,19 @@ type Approval struct {
 
 type ResourceState string
 
+type RefreshToken struct {
+	gorm.Model
+	RefreshToken   string
+	Version        int
+	UsedAt         *time.Time
+	ReUsedAt       *time.Time
+	CanceledAt     *time.Time
+	CanceledReason string
+
+	TFOResourceSpec   TFOResourceSpec `json:"tfo_resource_spec,omitempty"`
+	TFOResourceSpecID uint            `json:"tfo_resource_spec_id"`
+}
+
 const (
 	Untracked ResourceState = "untracked"
 	Running   ResourceState = "running"

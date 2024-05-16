@@ -29,6 +29,7 @@ var (
 	useServiceHost  bool
 	serviceName     string
 	dashboard       string
+	fswatchImage    string
 )
 
 func main() {
@@ -60,6 +61,8 @@ func main() {
 	viper.BindPFlag("service-name", pflag.Lookup("service-name"))
 	pflag.StringVar(&dashboard, "dashboard", "", "Connect to the dashboard with api credentials")
 	viper.BindPFlag("dashboard", pflag.Lookup("dashboard"))
+	pflag.StringVar(&fswatchImage, "fswatch-image", "ghcr.io/galleybytes/fswatch:0.11.0", "Docker image for fswatch (log-service)")
+	viper.BindPFlag("fswatch-image", pflag.Lookup("fswatch-image"))
 	pflag.Parse()
 
 	pflag.Set("alsologtostderr", "false")
@@ -80,6 +83,7 @@ func main() {
 	useServiceHost = viper.GetBool("use-service-host")
 	serviceName = viper.GetString("service-name")
 	dashboard = viper.GetString("dashboard")
+	fswatchImage = viper.GetString("fswatch-image")
 
 	clientset := kubernetes.NewForConfigOrDie(NewConfigOrDie(os.Getenv("KUBECONFIG")))
 	var database *gorm.DB
@@ -109,7 +113,7 @@ func main() {
 		}
 	}
 
-	apiHandler := api.NewAPIHandler(database, clientset, ssoConfig, &serviceIP, &dashboard)
+	apiHandler := api.NewAPIHandler(database, clientset, ssoConfig, &serviceIP, &dashboard, fswatchImage)
 	apiHandler.RegisterRoutes()
 	fmt.Printf("Starting server on %s\n", addr)
 	apiHandler.Server.Run(addr)

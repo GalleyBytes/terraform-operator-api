@@ -13,14 +13,15 @@ import (
 )
 
 type APIHandler struct {
-	Server    *gin.Engine
-	DB        *gorm.DB
-	clientset kubernetes.Interface
-	ssoConfig *SSOConfig
-	serviceIP *string
-	tenant    string
-	Cache     *cache.Cache
-	dashboard *string
+	Server       *gin.Engine
+	DB           *gorm.DB
+	clientset    kubernetes.Interface
+	ssoConfig    *SSOConfig
+	serviceIP    *string
+	tenant       string
+	Cache        *cache.Cache
+	dashboard    *string
+	fswatchImage string
 }
 
 type SSOConfig struct {
@@ -55,16 +56,17 @@ func NewSAMLConfig(issuer, recipient, metadataURL string) (*SSOConfig, error) {
 	}, nil
 }
 
-func NewAPIHandler(db *gorm.DB, clientset kubernetes.Interface, ssoConfig *SSOConfig, serviceIP, dashboard *string) *APIHandler {
+func NewAPIHandler(db *gorm.DB, clientset kubernetes.Interface, ssoConfig *SSOConfig, serviceIP, dashboard *string, fswatchImage string) *APIHandler {
 
 	return &APIHandler{
-		Server:    gin.Default(),
-		DB:        db,
-		clientset: clientset,
-		ssoConfig: ssoConfig,
-		serviceIP: serviceIP,
-		Cache:     cache.New(20 * time.Second),
-		dashboard: dashboard,
+		Server:       gin.Default(),
+		DB:           db,
+		clientset:    clientset,
+		ssoConfig:    ssoConfig,
+		serviceIP:    serviceIP,
+		Cache:        cache.New(20 * time.Second),
+		dashboard:    dashboard,
+		fswatchImage: fswatchImage,
 	}
 }
 

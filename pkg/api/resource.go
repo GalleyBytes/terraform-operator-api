@@ -1412,7 +1412,7 @@ func (h APIHandler) addResource(c *gin.Context) (string, error) {
 	appendClusterNameLabel(&jsonData.Terraform, cluster.Name)
 	addGlobalTaskOptions(&jsonData.Terraform, h.tenant, clusterName, apiURL)
 
-	err = applyOnCreateOrUpdate(c, jsonData.Terraform, h.clientset, h.tenant)
+	err = applyOnCreateOrUpdate(c, jsonData.Terraform, h.clientset, h.tenant, h.fswatchImage)
 	if err != nil {
 		return "", err
 	}
@@ -1508,7 +1508,7 @@ func (h APIHandler) updateResource(c *gin.Context) error {
 	appendClusterNameLabel(&jsonData.Terraform, clusterName)
 	addGlobalTaskOptions(&jsonData.Terraform, h.tenant, clusterName, apiURL)
 
-	err = applyOnCreateOrUpdate(c, jsonData.Terraform, h.clientset, h.tenant)
+	err = applyOnCreateOrUpdate(c, jsonData.Terraform, h.clientset, h.tenant, h.fswatchImage)
 	if err != nil {
 		return err
 	}
@@ -1868,7 +1868,7 @@ func jsonify(o interface{}) (string, error) {
 	return string(b), nil
 }
 
-func applyOnCreateOrUpdate(ctx context.Context, tf tfv1beta1.Terraform, clientset kubernetes.Interface, _tenantID string) error {
+func applyOnCreateOrUpdate(ctx context.Context, tf tfv1beta1.Terraform, clientset kubernetes.Interface, _tenantID, fswatchImage string) error {
 	// tenantID is totally broken right now. Just hardcode this for now
 	tenantID := "internal"
 
@@ -1935,7 +1935,7 @@ func applyOnCreateOrUpdate(ctx context.Context, tf tfv1beta1.Terraform, clientse
 	}
 
 	fswatchImageConfig := tfv1beta1.ImageConfig{
-		Image:           "ghcr.io/galleybytes/fswatch:0.10.2",
+		Image:           fswatchImage,
 		ImagePullPolicy: corev1.PullIfNotPresent,
 	}
 	for _, taskName := range []tfv1beta1.TaskName{

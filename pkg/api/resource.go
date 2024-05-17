@@ -1599,6 +1599,13 @@ func NewTaskToken(db *gorm.DB, tfoResourceSpec models.TFOResourceSpec, _tenantID
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      secretName,
 				Namespace: tfoResource.Namespace,
+
+				// The OwnerReference is not working as expected and the secret is getting removed
+				// immediately after it's creation. Find out the right way to add ownership
+				// so the secrets have the same lifetime as the resource that consumes it.
+
+				/* ************************************************************
+
 				OwnerReferences: []metav1.OwnerReference{
 					{
 						APIVersion:         string("tf.galleybytes.com/v1beta1"),
@@ -1609,6 +1616,8 @@ func NewTaskToken(db *gorm.DB, tfoResourceSpec models.TFOResourceSpec, _tenantID
 						BlockOwnerDeletion: newTrue(),
 					},
 				},
+
+				************************************************************* */
 			},
 
 			StringData: map[string]string{
@@ -1634,6 +1643,7 @@ func NewTaskToken(db *gorm.DB, tfoResourceSpec models.TFOResourceSpec, _tenantID
 				return nil, fmt.Errorf("failed to patch secret: %s", err)
 			}
 		}
+		log.Printf("Patched %s/%s in %s-%s", tfoResource.Namespace, secretName, tenantID, clusterName)
 
 		refreshToken := models.RefreshToken{
 			RefreshToken:      hash,

@@ -1540,6 +1540,51 @@ func (h APIHandler) updateResource(c *gin.Context) error {
 	return nil
 }
 
+// manualTokenPatch is used to re-submit a new token secret to the vcluster. Resources can generally
+// use a refresh token, but this can be useful if the refresh token has been invalidated.
+func (h APIHandler) manualTokenPatch(c *gin.Context) {
+	name := c.Param("name")
+	namespace := c.Param("namespace")
+	clusterName := c.Param("cluster_name")
+
+	var tfoResourceSpec models.TFOResourceSpec
+
+	result := h.DB.Raw(`
+		SELECT
+			tfo_resource_specs.*
+		FROM
+			tfo_resource_specs
+			JOIN
+				tfo_resources
+				ON tfo_resources.uuid = tfo_resource_specs.tfo_resource_uuid
+			JOIN
+				clusters
+				ON clusters.id = tfo_resources.cluster_id
+		WHERE clusters.name = ?
+			AND tfo_resources.namespace = ?
+			AND tfo_resources.name = ?
+			AND tfo_resource_specs.generation = tfo_resources.current_generation
+	`, clusterName, namespace, name).Scan(&tfoResourceSpec)
+	if result.Error != nil {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("error getting TFOResourceSpec: %v", result.Error), nil))
+		return
+	}
+	if tfoResourceSpec.ID == 0 {
+		c.JSON(http.StatusNotFound, response(http.StatusNotFound, "TFOResourceSpec not found", nil))
+		return
+	}
+
+	apiURL := GetApiURL(c, h.serviceIP)
+	_, err := NewTaskToken(h.DB, tfoResourceSpec, h.tenant, clusterName, apiURL, h.clientset)
+	if err != nil {
+
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
+		return
+	}
+
+	c.JSON(http.StatusNoContent, response(http.StatusNoContent, "", nil))
+}
+
 // Soft deletes tfo_resources from the database except the latest one via created_at timestamp
 func deleteTFOResourcesExceptNewest(db *gorm.DB, tfoResource *models.TFOResource) error {
 	// A tfo resource has a namespace and a name, which are used to identify it uniquely within the cluster.

@@ -110,6 +110,7 @@ func (h APIHandler) RegisterRoutes() {
 	cluster.PUT("/:cluster_name/event", h.ResourceEvent)
 	cluster.DELETE("/:cluster_name/event/:tfo_resource_uuid", h.ResourceEvent)
 	cluster.GET("/:cluster_name/resource/:namespace/:name/poll", h.ResourcePoll) // Poll for resource objects in the cluster
+	cluster.PATCH("/:cluster_name/resource/:namespace/:name/token", h.manualTokenPatch)
 	cluster.GET("/:cluster_name/resource/:namespace/:name/debug", h.Debugger)
 	cluster.GET("/:cluster_name/debug/:namespace/:name", h.Debugger) // Alias
 	cluster.GET("/:cluster_name/resource/:namespace/:name/unlock", h.UnlockTerraform)

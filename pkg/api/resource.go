@@ -350,7 +350,7 @@ func (h APIHandler) rerunWorkflow(c *gin.Context) {
 	name := c.Param("name")
 	namespace := c.Param("namespace")
 
-	err := rerun(h.clientset, clusterName, namespace, name, c)
+	err := rerun(h.clientset, clusterName, namespace, name, "api-triggered-rerun", c)
 	if err != nil {
 		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("Failed to trigger rerun: %s", err), []any{}))
 		return
@@ -358,7 +358,7 @@ func (h APIHandler) rerunWorkflow(c *gin.Context) {
 	c.JSON(http.StatusNoContent, nil)
 }
 
-func rerun(parentClientset kubernetes.Interface, clusterName, namespace, name string, ctx context.Context) error {
+func rerun(parentClientset kubernetes.Interface, clusterName, namespace, name, labelValue string, ctx context.Context) error {
 	config, err := getVclusterConfig(parentClientset, "internal", clusterName)
 	if err != nil {
 		return err
@@ -373,7 +373,7 @@ func rerun(parentClientset kubernetes.Interface, clusterName, namespace, name st
 		resource.Labels = map[string]string{}
 	}
 
-	resource.Labels["kubernetes.io/change-cause"] = fmt.Sprintf("api-triggered-rerun-%s", time.Now().Format("20060102150405"))
+	resource.Labels["kubernetes.io/change-cause"] = fmt.Sprintf("%s-%s", labelValue, time.Now().Format("20060102150405"))
 	_, err = tfoclientset.TfV1beta1().Terraforms(namespace).Update(ctx, resource, metav1.UpdateOptions{})
 	if err != nil {
 		return err

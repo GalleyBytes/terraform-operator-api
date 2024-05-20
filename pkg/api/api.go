@@ -112,7 +112,7 @@ func (h APIHandler) RegisterRoutes() {
 	cluster.GET("/:cluster_name/resource/:namespace/:name/poll", h.ResourcePoll) // Poll for resource objects in the cluster
 	cluster.GET("/:cluster_name/resource/:namespace/:name/debug", h.Debugger)
 	cluster.GET("/:cluster_name/debug/:namespace/:name", h.Debugger) // Alias
-	cluster.GET("/:cluster_name/resource/:namespace/:name/unlock", h.UnlockTFO)
+	cluster.GET("/:cluster_name/resource/:namespace/:name/unlock", h.UnlockTerraform)
 	cluster.GET("/:cluster_name/resource/:namespace/:name/status", h.ResourceStatusCheck)
 	cluster.GET("/:cluster_name/status/:namespace/:name", h.ResourceStatusCheck) // Alias
 	cluster.GET("/:cluster_name/resource/:namespace/:name/last-task-log", h.LastTaskLog)

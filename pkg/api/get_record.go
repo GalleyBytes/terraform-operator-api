@@ -30,6 +30,7 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/remotecommand"
 	"k8s.io/kubectl/pkg/cmd/exec"
 	"k8s.io/kubectl/pkg/scheme"
@@ -731,7 +732,6 @@ func (h APIHandler) Debugger(c *gin.Context) {
 		return
 	}
 	defer conn.Close()
-	var command []string
 
 	execCommand := []string{
 		"/bin/bash",
@@ -746,7 +746,7 @@ func (h APIHandler) Debugger(c *gin.Context) {
 		`,
 	}
 
-	podExecReadWriter, err := New(h.clientset, clusterName, namespace, name, c, cmd, command, execCommand, false, true)
+	podExecReadWriter, err := newSessionInTerraformDebugPod(h.clientset, clusterName, namespace, name, c, cmd, execCommand)
 	if err != nil {
 		log.Printf("Failed to connect to debug pod: %s", err)
 		return
@@ -795,7 +795,7 @@ func (h APIHandler) Debugger(c *gin.Context) {
 	// return
 }
 
-func (h APIHandler) UnlockTFO(c *gin.Context) {
+func (h APIHandler) UnlockTerraform(c *gin.Context) {
 	clusterName := c.Param("cluster_name")
 	clusterID := h.getClusterID(clusterName)
 	if clusterID == 0 {
@@ -808,8 +808,6 @@ func (h APIHandler) UnlockTFO(c *gin.Context) {
 		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("tf resource '%s/%s' not found", namespace, name), nil))
 		return
 	}
-
-	cmd := []string{}
 
 	command := []string{
 		"/bin/bash",
@@ -832,15 +830,13 @@ func (h APIHandler) UnlockTFO(c *gin.Context) {
 		echo "Done"`,
 	}
 
-	execCommand := []string{}
-
-	_, err := New(h.clientset, clusterName, namespace, name, c, cmd, command, execCommand, true, false)
+	err := runUnlockTerraformDebugPod(h.clientset, clusterName, namespace, name, c, command)
 	if err != nil {
-		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("tfo unlock failed: %s", err), nil))
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("terraform unlock failed: %s", err), nil))
 		return
 	}
 
-	c.JSON(http.StatusOK, response(http.StatusOK, fmt.Sprint("tfo unlocked"), nil))
+	c.JSON(http.StatusOK, response(http.StatusOK, "terraform unlocked", nil))
 
 }
 
@@ -924,7 +920,7 @@ func (t TermSizer) Next() *remotecommand.TerminalSize {
 // }
 
 // command string, argv []string, headers map[string][]string, options ...Option
-func New(clientset kubernetes.Interface, clusterName, namespace, name string, c *gin.Context, cmd, command, execCommand []string, isUnlock, isGoroutine bool) (*PodExec, error) {
+func newSessionInTerraformDebugPod(clientset kubernetes.Interface, clusterName, namespace, name string, c *gin.Context, cmd, execCommand []string) (*PodExec, error) {
 	pty, tty, err := ptylib.Open()
 	if err != nil {
 		log.Fatal(err)
@@ -940,26 +936,12 @@ func New(clientset kubernetes.Interface, clusterName, namespace, name string, c 
 		SizeCh: sizeCh,
 	}
 
-	if isGoroutine {
-		go func() {
-			defer pty.Close()
-			err := RemoteDebug(clientset, clusterName, namespace, name, tty, c, termSizer, cmd, command, execCommand, isUnlock)
-			log.Println("Pod exec exited")
-			closeCh <- err
-		}()
-	} else {
-		err = RemoteDebug(clientset, clusterName, namespace, name, tty, c, termSizer, cmd, command, execCommand, isUnlock)
+	go func() {
+		defer pty.Close()
+		err := RemoteDebug(clientset, clusterName, namespace, name, tty, c, termSizer, cmd, execCommand)
 		log.Println("Pod exec exited")
-		if err != nil {
-			return &PodExec{
-				pty:       pty,
-				reader:    pty,
-				writer:    pty,
-				termSizer: termSizer,
-				Closer:    closeCh,
-			}, err
-		}
-	}
+		closeCh <- err
+	}()
 
 	return &PodExec{
 		pty:       pty,
@@ -1005,39 +987,57 @@ func (p *PodExec) Close() error {
 	return nil
 }
 
-// RemoteDebug starts the debug pod and connects in a tty that will be synced thru a websocket. Anything written to
-// stdout will be synced to the tty. stderr logs will show up in the api logs and not the tty.
-func RemoteDebug(parentClientset kubernetes.Interface, clusterName, namespace, name string, tty *os.File, c *gin.Context, terminalSizeQueue remotecommand.TerminalSizeQueue, cmd, command, execCommand []string, isUnlock bool) error {
+func createDebugPodManifest(c *gin.Context, config *rest.Config, namespace, name string, command []string) (*corev1.Pod, error) {
+	tfoclientset := tfo.NewForConfigOrDie(config)
+	tfclient := tfoclientset.TfV1beta1().Terraforms(namespace)
+	tf, err := tfclient.Get(c, name, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	pod := generatePod(tf, command)
+	return pod, nil
+}
 
+func runUnlockTerraformDebugPod(parentClientset kubernetes.Interface, clusterName, namespace, name string, c *gin.Context, command []string) error {
 	config, err := getVclusterConfig(parentClientset, "internal", clusterName)
 	if err != nil {
 		return err
 	}
-	tfoclientset := tfo.NewForConfigOrDie(config)
-	clientset := kubernetes.NewForConfigOrDie(config)
-	tfclient := tfoclientset.TfV1beta1().Terraforms(namespace)
-	// newSession()
 
-	// tfoclientset := session.tfoclientset.TfV1beta1().Terraforms(namespace)
-	podClient := clientset.CoreV1().Pods(namespace)
-
-	tf, err := tfclient.Get(c, name, metav1.GetOptions{})
+	pod, err := createDebugPodManifest(c, config, namespace, name, command)
 	if err != nil {
 		return err
 	}
-	pod := generatePod(tf, command)
 
+	clientset := kubernetes.NewForConfigOrDie(config)
+	podClient := clientset.CoreV1().Pods(namespace)
 	pod, err = podClient.Create(c, pod, metav1.CreateOptions{})
 	if err != nil {
 		return err
 	}
 
-	if isUnlock == true {
-		err = getPodStatus(pod, clientset, namespace)
-		if err != nil {
-			return err
-		}
-		return nil
+	return getPodStatus(pod, clientset, namespace)
+}
+
+// RemoteDebug starts the debug pod and connects in a tty that will be synced thru a websocket. Anything written to
+// stdout will be synced to the tty. stderr logs will show up in the api logs and not the tty.
+func RemoteDebug(parentClientset kubernetes.Interface, clusterName, namespace, name string, tty *os.File, c *gin.Context, terminalSizeQueue remotecommand.TerminalSizeQueue, cmd, execCommand []string) error {
+
+	config, err := getVclusterConfig(parentClientset, "internal", clusterName)
+	if err != nil {
+		return err
+	}
+
+	pod, err := createDebugPodManifest(c, config, namespace, name, nil)
+	if err != nil {
+		return err
+	}
+
+	clientset := kubernetes.NewForConfigOrDie(config)
+	podClient := clientset.CoreV1().Pods(namespace)
+	pod, err = podClient.Create(c, pod, metav1.CreateOptions{})
+	if err != nil {
+		return err
 	}
 
 	defer podClient.Delete(c, pod.Name, metav1.DeleteOptions{})

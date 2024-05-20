@@ -835,6 +835,11 @@ func (h APIHandler) UnlockTerraform(c *gin.Context) {
 		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("terraform unlock failed: %s", err), nil))
 		return
 	}
+	err = rerun(h.clientset, clusterName, namespace, name, "unlock-terraform-triggered-rerun", c)
+	if err != nil {
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("Failed to trigger rerun: %s", err), []any{}))
+		return
+	}
 
 	c.JSON(http.StatusOK, response(http.StatusOK, "terraform unlocked", nil))
 

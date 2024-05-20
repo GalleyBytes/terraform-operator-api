@@ -358,7 +358,7 @@ func (h APIHandler) rerunWorkflow(c *gin.Context) {
 	c.JSON(http.StatusNoContent, nil)
 }
 
-func rerun(parentClientset kubernetes.Interface, clusterName, namespace, name, labelValue string, ctx context.Context) error {
+func rerun(parentClientset kubernetes.Interface, clusterName, namespace, name, rerunLabelValue string, ctx context.Context) error {
 	config, err := getVclusterConfig(parentClientset, "internal", clusterName)
 	if err != nil {
 		return err
@@ -373,7 +373,7 @@ func rerun(parentClientset kubernetes.Interface, clusterName, namespace, name, l
 		resource.Labels = map[string]string{}
 	}
 
-	resource.Labels["kubernetes.io/change-cause"] = fmt.Sprintf("%s-%s", labelValue, time.Now().Format("20060102150405"))
+	resource.Labels["kubernetes.io/change-cause"] = fmt.Sprintf("%s-%s", rerunLabelValue, time.Now().Format("20060102150405"))
 	_, err = tfoclientset.TfV1beta1().Terraforms(namespace).Update(ctx, resource, metav1.UpdateOptions{})
 	if err != nil {
 		return err

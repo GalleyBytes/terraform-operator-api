@@ -130,16 +130,14 @@ func (h APIHandler) workflows(c *gin.Context) {
 		UpdatedAt         time.Time `json:"updated_at"`
 	}
 
-	query := workflows(h.DB).
-		Limit(l).
-		Offset(n).
-		Order("tfo_resources.updated_at DESC")
-
+	name := ""
+	namespace := ""
+	clusterName := ""
 	if matchAny != "" {
 		m := fmt.Sprintf("%%%s%%", matchAny)
-		name := m
-		namespace := m
-		clusterName := m
+		name = m
+		namespace = m
+		clusterName = m
 
 		if strings.Contains(matchAny, "=") {
 			name = "%"
@@ -153,25 +151,19 @@ func (h APIHandler) workflows(c *gin.Context) {
 				key := columnQuery[0]
 				value := columnQuery[1]
 				if key == "name" {
-					query.Where("tfo_resources.name LIKE ?", fmt.Sprintf("%%%s%%", value))
+					name = value
 				}
 				if key == "namespace" {
-					query.Where("tfo_resources.namespace LIKE ?", fmt.Sprintf("%%%s%%", value))
+					namespace = value
 				}
 				if strings.HasPrefix(key, "cluster") {
-					query.Where("clusters.name LIKE ?", fmt.Sprintf("%%%s%%", value))
+					clusterName = value
 				}
 			}
-		} else {
-			query.Where("(tfo_resources.name LIKE ? or tfo_resources.namespace LIKE ? or clusters.name LIKE ?)",
-				name,
-				namespace,
-				clusterName,
-			)
 		}
 	}
 
-	query.Debug().Scan(&result)
+	workflows(h.DB, name, namespace, clusterName, n, l).Scan(&result)
 
 	c.JSON(http.StatusOK, response(http.StatusOK, "", result))
 }

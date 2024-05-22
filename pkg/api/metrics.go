@@ -83,31 +83,50 @@ func workflow(db *gorm.DB, clusterName uint, namespace, name string) *gorm.DB {
 		Where("tfo_resources.deleted_at is null and tfo_resources.cluster_id = ? and tfo_resources.namespace = ? and tfo_resources.name = ?", clusterName, namespace, name)
 }
 
-func workflows(db *gorm.DB) *gorm.DB {
-	return db.Debug().Table("tfo_resources").
-		Select(`
+func workflows(db *gorm.DB, name, namespace, clusterName string, offset, limit int) *gorm.DB {
+	queryString := fmt.Sprintf(`
+		SELECT
 			tfo_resources.uuid,
 			tfo_resources.current_generation,
 			tfo_resources.name,
 			tfo_resources.namespace,
 			tfo_resources.current_state,
-			tfo_resources.updated_at,
 			tfo_resources.created_at,
-			clusters.name AS cluster_name
-		`).
-		Joins("JOIN clusters ON tfo_resources.cluster_id = clusters.id").
-		Where("tfo_resources.deleted_at is null")
+			clusters.name as cluster_name,
+			tfo_resources.updated_at as resource_updated_at,
+			logs.updated_at as updated_at
+		FROM tfo_resources
+		LEFT JOIN (
+			SELECT task_pods.tfo_resource_uuid, MAX(tfo_task_logs.updated_at) as updated_at
+			FROM tfo_task_logs
+			JOIN task_pods on task_pods.uuid = tfo_task_logs.task_pod_uuid
+			WHERE tfo_task_logs.updated_at IS NOT NULL
+			GROUP BY task_pods.tfo_resource_uuid
+		) logs ON logs.tfo_resource_uuid = tfo_resources.uuid
+		JOIN clusters ON clusters.id = tfo_resources.cluster_id
+		WHERE tfo_resources.deleted_at IS NULL
+		AND tfo_resources.name LIKE '%%%s%%'
+		AND tfo_resources.namespace LIKE '%%%s%%'
+		AND clusters.name LIKE '%%%s%%'
+		ORDER BY logs.updated_at DESC NULLS LAST
+		OFFSET %d
+		LIMIT %d
+	`, name, namespace, clusterName, offset, limit)
+
+	return db.Raw(queryString)
 }
 
 func (h APIHandler) TotalResources(c *gin.Context) {
-	query := workflows(h.DB)
 
+	name := ""
+	namespace := ""
+	clusterName := ""
 	matchAny, _ := c.GetQuery("matchAny")
 	if matchAny != "" {
 		m := fmt.Sprintf("%%%s%%", matchAny)
-		name := m
-		namespace := m
-		clusterName := m
+		name = m
+		namespace = m
+		clusterName = m
 
 		if strings.Contains(matchAny, "=") {
 			name = "%"
@@ -121,26 +140,20 @@ func (h APIHandler) TotalResources(c *gin.Context) {
 				key := columnQuery[0]
 				value := columnQuery[1]
 				if key == "name" {
-					query.Where("tfo_resources.name LIKE ?", fmt.Sprintf("%%%s%%", value))
+					name = value
 				}
 				if key == "namespace" {
-					query.Where("tfo_resources.namespace LIKE ?", fmt.Sprintf("%%%s%%", value))
+					namespace = value
 				}
 				if strings.HasPrefix(key, "cluster") {
-					query.Where("clusters.name LIKE ?", fmt.Sprintf("%%%s%%", value))
+					clusterName = value
 				}
 			}
-		} else {
-			query.Where("(tfo_resources.name LIKE ? or tfo_resources.namespace LIKE ? or clusters.name LIKE ?)",
-				name,
-				namespace,
-				clusterName,
-			)
 		}
 	}
 
 	var count int64
-	query.Count(&count)
+	workflows(h.DB, name, namespace, clusterName, 0, 1000000).Count(&count)
 	c.JSON(http.StatusOK, response(http.StatusOK, "", []int64{count}))
 }
 

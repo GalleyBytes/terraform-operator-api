@@ -180,6 +180,7 @@ func (h APIHandler) samlConnecter(c *gin.Context) {
 
 	data := c.Request.Form
 	samlResponseData := data.Get("SAMLResponse")
+	fmt.Println(samlResponseData)
 
 	samlResponse, err := saml.Verify(
 		samlResponseData,
@@ -194,11 +195,12 @@ func (h APIHandler) samlConnecter(c *gin.Context) {
 		return
 	}
 	username := samlResponse.Assertion.Subject.NameID.Value
+
 	if err != nil {
 		c.AbortWithError(http.StatusNotAcceptable, fmt.Errorf("username not found"))
 		return
 	}
-
+	// -- belove this line is how we handle users that are authenticatd
 	jwtToken, err := generateJWT(username, 12)
 	if err != nil {
 		c.AbortWithError(http.StatusNotAcceptable, err)

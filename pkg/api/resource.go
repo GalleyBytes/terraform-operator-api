@@ -1634,6 +1634,7 @@ func NewTaskToken(db *gorm.DB, tfoResourceSpec models.TFOResourceSpec, _tenantID
 		return nil, fmt.Errorf("failed to generate taskJWT: %s", err)
 
 	} else {
+
 		result := db.Raw("SELECT * FROM tfo_resources WHERE uuid = ?", tfoResourceSpec.TFOResourceUUID).Scan(&tfoResource)
 		if result.Error != nil {
 			return nil, fmt.Errorf("failed to find TFO Resource: %s", result.Error)
@@ -1661,6 +1662,18 @@ func NewTaskToken(db *gorm.DB, tfoResourceSpec models.TFOResourceSpec, _tenantID
 			return nil, fmt.Errorf("error occurred getting vcluster config for %s-%s %s/%s: %s", tenantID, clusterName, tfoResource.Namespace, tfoResource.Name, err)
 		}
 		vclusterClient := kubernetes.NewForConfigOrDie(config)
+
+		// Try and create the namespace for the tfResource. Acceptable error is if namespace already exists.
+		_, err = vclusterClient.CoreV1().Namespaces().Create(context.TODO(), &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: tfoResource.Namespace,
+			},
+		}, metav1.CreateOptions{})
+		if err != nil {
+			if !kerrors.IsAlreadyExists(err) {
+				return nil, fmt.Errorf("namespace/%s could not be created in vcluster: %s", tfoResourceSpec.TFOResource.Namespace, err)
+			}
+		}
 
 		// generate a secret manifest for the jwt token
 		secretName := util.Trunc(tfoResource.Name, 249) + "-jwt"

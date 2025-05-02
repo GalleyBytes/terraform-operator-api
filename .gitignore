@@ -19,5 +19,9 @@
 server
 bin
 
+# Air "hot-reloading"
+tmp
+.air.toml
+
 # ides
 .vscode

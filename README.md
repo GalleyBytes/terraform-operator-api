@@ -122,13 +122,13 @@ kubectl port-forward -n internal-$CLIENT_NAME svc/tfo-virtual-cluster 8443:8443
 After running the port-forward command, the remote controller should be ready to go in a minute.
 
 > The logs from the remote-controller should look something like this:
-> ````
-2025/05/02 15:40:49 Setting up
-2025/05/02 15:40:49 VCluster is ready!
-2025/05/02 15:40:49 TFO is ready!
-2025/05/02 15:40:49 Starting informer
-2025/05/02 15:40:49 Queue worker started
-
+> ```
+> 2025/05/02 15:40:49 Setting up
+> 2025/05/02 15:40:49 VCluster is ready!
+> 2025/05/02 15:40:49 TFO is ready!
+> 2025/05/02 15:40:49 Starting informer
+> 2025/05/02 15:40:49 Queue worker started
+> ```
 
 ## Other Run Options
 

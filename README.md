@@ -116,7 +116,7 @@ Port forward the vcluster:
 
 ```bash
 CLIENT_NAME=docker-desktop
-kubectl port-forward -n internal-$CLIENT_NAME svc/tfo-virtual-cluster 8443:8443
+kubectl port-forward -n internal-$CLIENT_NAME svc/tfo-virtual-cluster 8443:443
 ```
 
 After running the port-forward command, the remote controller should be ready to go in a minute.

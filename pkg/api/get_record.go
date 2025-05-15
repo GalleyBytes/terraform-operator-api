@@ -17,9 +17,9 @@ import (
 	"time"
 
 	ptylib "github.com/creack/pty"
-	"github.com/galleybytes/terraform-operator-api/pkg/common/models"
-	tfv1beta1 "github.com/galleybytes/terraform-operator/pkg/apis/tf/v1beta1"
-	tfo "github.com/galleybytes/terraform-operator/pkg/client/clientset/versioned"
+	"github.com/galleybytes/infra3-stella/pkg/common/models"
+	infra3v1 "github.com/galleybytes/infra3/pkg/apis/infra3/v1"
+	infra3clientset "github.com/galleybytes/infra3/pkg/client/clientset/versioned"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/sorenisanerd/gotty/webtty"
@@ -60,9 +60,9 @@ func response(httpstatus int64, message string, results interface{}) *Response {
 func (h APIHandler) GetDistinctGeneration(c *gin.Context) {
 	// The TFOResourceSpec is created once for each generation that passes thru the monitor. It is the best
 	// resource to query for generations of a particular resource.
-	uuid := c.Param("tfo_resource_uuid")
+	uuid := c.Param("infra3_resource_uuid")
 	var generation []int
-	if result := h.DB.Raw("SELECT DISTINCT generation FROM tfo_resource_specs WHERE tfo_resource_uuid = ?", &uuid).Scan(&generation); result.Error != nil {
+	if result := h.DB.Raw("SELECT DISTINCT generation FROM infra3_resource_specs WHERE infra3_resource_uuid = ?", &uuid).Scan(&generation); result.Error != nil {
 		c.JSON(http.StatusNotFound, response(http.StatusNotFound, result.Error.Error(), nil))
 		return
 	}
@@ -71,7 +71,7 @@ func (h APIHandler) GetDistinctGeneration(c *gin.Context) {
 
 func (h APIHandler) GetUuidByClusterID(c *gin.Context) {
 	clusterID := c.Param("cluster_id")
-	var clusterIdInfo models.TFOResource
+	var clusterIdInfo models.Infra3Resource
 
 	if result := h.DB.Where("cluster_id = ?", clusterID).First(&clusterIdInfo); result.Error != nil {
 		c.AbortWithError(http.StatusNotFound, result.Error)
@@ -180,7 +180,7 @@ func (h APIHandler) ListClusters(c *gin.Context) {
 }
 
 func (h APIHandler) GetClustersResources(c *gin.Context) {
-	var resources []models.TFOResource
+	var resources []models.Infra3Resource
 	clusterID := c.Param("cluster_id")
 
 	if result := h.DB.Where("cluster_id = ?", clusterID).Find(&resources); result.Error != nil {
@@ -192,18 +192,18 @@ func (h APIHandler) GetClustersResources(c *gin.Context) {
 }
 
 func (h APIHandler) GetResourceByUUID(c *gin.Context) {
-	var tfoResources []models.TFOResource
-	uuid := c.Param("tfo_resource_uuid")
+	var infra3Resources []models.Infra3Resource
+	uuid := c.Param("infra3_resource_uuid")
 	responseMsg := ""
-	if result := h.DB.First(&tfoResources, "uuid = ?", uuid); result.Error != nil {
+	if result := h.DB.First(&infra3Resources, "uuid = ?", uuid); result.Error != nil {
 		if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
-			c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, result.Error.Error(), tfoResources))
+			c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, result.Error.Error(), infra3Resources))
 			return
 		}
 		responseMsg = result.Error.Error()
 	}
 
-	c.JSON(http.StatusOK, response(http.StatusOK, responseMsg, tfoResources))
+	c.JSON(http.StatusOK, response(http.StatusOK, responseMsg, infra3Resources))
 }
 
 func highestRerun(taskPods []models.TaskPod, taskType string, minimum float64) (models.TaskPod, float64) {
@@ -229,21 +229,21 @@ func highestRerun(taskPods []models.TaskPod, taskType string, minimum float64) (
 }
 
 func (h APIHandler) LatestGeneration(uuid string) string {
-	var tfoResource models.TFOResource
-	if result := h.DB.First(&tfoResource, "uuid = ?", &uuid); result.Error != nil {
+	var infra3Resource models.Infra3Resource
+	if result := h.DB.First(&infra3Resource, "uuid = ?", &uuid); result.Error != nil {
 		return ""
 	}
-	return tfoResource.CurrentGeneration
+	return infra3Resource.CurrentGeneration
 }
 
 // ResourceLog data contract for clients to consume
 type ResourceLog struct {
-	ID              uint   `json:"id"`
-	LogMessage      string `json:"message"`
-	TaskType        string `json:"task_type"`
-	Rerun           int    `json:"rerun"`
-	LineNo          string `json:"line_no"`
-	TFOResourceUUID string `json:"tfo_resource_uuid"`
+	ID                 uint   `json:"id"`
+	LogMessage         string `json:"message"`
+	TaskType           string `json:"task_type"`
+	Rerun              int    `json:"rerun"`
+	LineNo             string `json:"line_no"`
+	Infra3ResourceUUID string `json:"infra3_resource_uuid"`
 }
 
 // GetClustersResourceLogs will return the latest logs for the selected resource. The only filted allowed
@@ -254,7 +254,7 @@ func (h APIHandler) GetClustersResourcesLogs(c *gin.Context) {
 	generationFilter := c.Param("generation")
 	taskTypeFilter := c.Param("task_type")
 	rerunFilter := c.Param("rerun")
-	uuid := c.Param("tfo_resource_uuid")
+	uuid := c.Param("infra3_resource_uuid")
 
 	logs, err := h.ResourceLogs(generationFilter, rerunFilter, taskTypeFilter, uuid)
 	if err != nil {
@@ -273,11 +273,11 @@ func (h APIHandler) ResourceLogs(generationFilter, rerunFilter, taskTypeFilter, 
 
 	var taskPods []models.TaskPod
 	if rerunFilter != "" {
-		if result := h.DB.Where("tfo_resource_uuid = ? AND generation = ? AND rerun = ?", &uuid, &generationFilter, &rerunFilter).Find(&taskPods); result.Error != nil {
+		if result := h.DB.Where("infra3_resource_uuid = ? AND generation = ? AND rerun = ?", &uuid, &generationFilter, &rerunFilter).Find(&taskPods); result.Error != nil {
 			return logs, result.Error
 		}
 	} else {
-		if result := h.DB.Where("tfo_resource_uuid = ? AND generation = ?", &uuid, &generationFilter).Find(&taskPods); result.Error != nil {
+		if result := h.DB.Where("infra3_resource_uuid = ? AND generation = ?", &uuid, &generationFilter).Find(&taskPods); result.Error != nil {
 			return logs, result.Error
 		}
 	}
@@ -319,20 +319,20 @@ func (h APIHandler) ResourceLogs(generationFilter, rerunFilter, taskTypeFilter, 
 		taskPodsOfHighestRerun = append(taskPodsOfHighestRerun, taskPod)
 	}
 
-	// Find all the tfoTaskLogs that were created from the taskPods
+	// Find all the infra3TaskLogs that were created from the taskPods
 	taskPodUUIDs := []string{}
 	for _, t := range taskPodsOfHighestRerun {
 		taskPodUUIDs = append(taskPodUUIDs, t.UUID)
 	}
-	var tfoTaskLogs []models.TFOTaskLog
-	if result := h.DB.Where("task_pod_uuid IN ?", taskPodUUIDs).Find(&tfoTaskLogs); result.Error != nil {
+	var infra3TaskLogs []models.Infra3TaskLog
+	if result := h.DB.Where("task_pod_uuid IN ?", taskPodUUIDs).Find(&infra3TaskLogs); result.Error != nil {
 		return logs, result.Error
 	}
 
 	// TODO optimize the taskPod/taskLog matching algorithm, leaving this simple lookup since logs are
 	// unlikely to be more than just a few thousand lines max. This number should be easily handled.
 	for _, taskPod := range taskPodsOfHighestRerun {
-		for _, log := range tfoTaskLogs {
+		for _, log := range infra3TaskLogs {
 			if log.TaskPodUUID == taskPod.UUID {
 				// TODO does the size need to be sent?
 				logs = append(logs, ResourceLog{
@@ -347,58 +347,58 @@ func (h APIHandler) ResourceLogs(generationFilter, rerunFilter, taskTypeFilter, 
 	return logs, nil
 }
 
-func (h APIHandler) GetTFOTaskLogsViaTask(c *gin.Context) {
+func (h APIHandler) GetInfra3TaskLogsViaTask(c *gin.Context) {
 	emptyResponse := []interface{}{}
 	taskPodUUID := c.Param("task_pod_uuid")
 
-	var tfoTaskLogs []models.TFOTaskLog
-	if result := h.DB.Where("task_pod_uuid = ?", taskPodUUID).Find(&tfoTaskLogs); result.Error != nil {
+	var infra3TaskLogs []models.Infra3TaskLog
+	if result := h.DB.Where("task_pod_uuid = ?", taskPodUUID).Find(&infra3TaskLogs); result.Error != nil {
 
 		// TODO No plans have been executed yet. This is not an error but we are not able to continue until the plan pod shows up.
 		c.JSON(http.StatusOK, response(http.StatusOK, "TaskPod "+result.Error.Error(), emptyResponse))
 		return
 	}
 
-	c.JSON(http.StatusOK, response(http.StatusOK, "", tfoTaskLogs))
+	c.JSON(http.StatusOK, response(http.StatusOK, "", infra3TaskLogs))
 }
 
-func (h APIHandler) LookupResourceSpec(generation, uuid string) *models.TFOResourceSpec {
-	var tfoResource models.TFOResource
-	var tfoResourceSpec models.TFOResourceSpec
+func (h APIHandler) LookupResourceSpec(generation, uuid string) *models.Infra3ResourceSpec {
+	var infra3Resource models.Infra3Resource
+	var infra3ResourceSpec models.Infra3ResourceSpec
 
 	if generation == "latest" {
-		if result := h.DB.First(&tfoResource, "uuid = ?", &uuid); result.Error != nil {
+		if result := h.DB.First(&infra3Resource, "uuid = ?", &uuid); result.Error != nil {
 			return nil
 		}
-		generation = tfoResource.CurrentGeneration
+		generation = infra3Resource.CurrentGeneration
 	}
 
-	if result := h.DB.Where("tfo_resource_uuid = ? AND generation =?", uuid, generation).First(&tfoResourceSpec); result.Error != nil {
+	if result := h.DB.Where("infra3_resource_uuid = ? AND generation =?", uuid, generation).First(&infra3ResourceSpec); result.Error != nil {
 		return nil
 	}
 
-	return &tfoResourceSpec
+	return &infra3ResourceSpec
 }
 
 type GetResourceSpecResponseData struct {
-	models.TFOResourceSpec `json:",inline"`
+	models.Infra3ResourceSpec `json:",inline"`
 }
 
 // func (h APIHandler) GetResourceSpec(c *gin.Context) {
-// 	uuid := c.Param("tfo_resource_uuid")
+// 	uuid := c.Param("infra3_resource_uuid")
 // 	generation := c.Param("generation")
-// 	tfoResourceSpec := h.LookupResourceSpec(generation, uuid)
+// 	infra3ResourceSpec := h.LookupResourceSpec(generation, uuid)
 
 // 	responseData := []interface{}{}
-// 	if tfoResourceSpec != nil {
-// 		responseData = append(responseData, GetResourceSpecResponseData{TFOResourceSpec: *tfoResourceSpec})
+// 	if infra3ResourceSpec != nil {
+// 		responseData = append(responseData, GetResourceSpecResponseData{TFOResourceSpec: *infra3ResourceSpec})
 // 	}
 // 	c.JSON(http.StatusOK, &responseData)
 // }
 
 type GetApprovalStatusResponseData struct {
-	TFOResourceUUID string `json:"tfo_resource_uuid"`
-	TaskPodUUID     string `json:"task_pod_uuid"`
+	Infra3ResourceUUID string `json:"infra3_resource_uuid"`
+	TaskPodUUID        string `json:"task_pod_uuid"`
 
 	// Status is fuzzy. -1 means it hasn't been decided, 0 is false, 1 is true for the approvals.
 	// Hasn't been decided means there is no record in the approvals table matching the uuid.
@@ -470,7 +470,7 @@ func (h APIHandler) GetApprovalStatusViaTaskPodUUID(c *gin.Context) {
 // The UUID of the TaskPod is used to lookup the Approval status to return to the caller.
 func (h APIHandler) GetApprovalStatus(c *gin.Context) {
 	responseData := []interface{}{}
-	uuid := c.Param("tfo_resource_uuid")
+	uuid := c.Param("infra3_resource_uuid")
 
 	generationFilter := c.Param("generation")
 	generation := generationFilter
@@ -478,8 +478,8 @@ func (h APIHandler) GetApprovalStatus(c *gin.Context) {
 		generation = h.LatestGeneration(uuid)
 	}
 
-	tfoResourceSpec := h.LookupResourceSpec(generation, uuid)
-	if tfoResourceSpec == nil {
+	infra3ResourceSpec := h.LookupResourceSpec(generation, uuid)
+	if infra3ResourceSpec == nil {
 		// TODO What's the error messsage?
 		c.JSON(http.StatusOK, response(http.StatusOK, "", responseData))
 		return
@@ -489,7 +489,7 @@ func (h APIHandler) GetApprovalStatus(c *gin.Context) {
 		RequireApproval bool `yaml:"requireApproval"`
 	}{}
 
-	err := yaml.Unmarshal([]byte(tfoResourceSpec.ResourceSpec), &spec)
+	err := yaml.Unmarshal([]byte(infra3ResourceSpec.ResourceSpec), &spec)
 	if err != nil {
 		c.JSON(http.StatusOK, response(http.StatusOK, err.Error(), responseData))
 		return
@@ -503,7 +503,7 @@ func (h APIHandler) GetApprovalStatus(c *gin.Context) {
 
 	taskType := "plan"
 	taskPods := []models.TaskPod{}
-	if result := h.DB.Where("tfo_resource_uuid = ? AND generation = ? AND task_type = ?", &uuid, &generation, &taskType).Find(&taskPods); result.Error != nil {
+	if result := h.DB.Where("infra3_resource_uuid = ? AND generation = ? AND task_type = ?", &uuid, &generation, &taskType).Find(&taskPods); result.Error != nil {
 		// TODO No plans have been executed yet. This is not an error but we are not able to continue until the plan pod shows up.
 		c.JSON(http.StatusOK, response(http.StatusOK, "", responseData))
 		return
@@ -603,8 +603,8 @@ func (s *SocketListener) Listen() {
 }
 
 func (h APIHandler) ResourceLogWatcher(c *gin.Context) {
-	tfoResourceUUID := c.Param("tfo_resource_uuid")
-	_ = tfoResourceUUID
+	infra3ResourceUUID := c.Param("infra3_resource_uuid")
+	_ = infra3ResourceUUID
 
 	var wsupgrader = websocket.Upgrader{
 		ReadBufferSize:  1024,
@@ -623,13 +623,13 @@ func (h APIHandler) ResourceLogWatcher(c *gin.Context) {
 	s := SocketListener{Connection: conn}
 	s.Listen()
 
-	taskLog := models.TFOTaskLog{}
+	taskLog := models.Infra3TaskLog{}
 	if result := h.DB.Last(&taskLog); result.Error != nil {
 		return
 	}
 	lastTaskLogID := taskLog.ID
 
-	logs, err := h.ResourceLogs("", "", "", tfoResourceUUID)
+	logs, err := h.ResourceLogs("", "", "", infra3ResourceUUID)
 	if err != nil {
 		return
 	}
@@ -653,7 +653,7 @@ func (h APIHandler) ResourceLogWatcher(c *gin.Context) {
 			s.Listen()
 
 		case <-time.Tick(1 * time.Second):
-			taskLog := models.TFOTaskLog{}
+			taskLog := models.Infra3TaskLog{}
 			if result := h.DB.Last(&taskLog); result.Error != nil {
 				return
 			}
@@ -662,7 +662,7 @@ func (h APIHandler) ResourceLogWatcher(c *gin.Context) {
 				continue
 			}
 
-			logs, err := h.ResourceLogs("", "", "", tfoResourceUUID)
+			logs, err := h.ResourceLogs("", "", "", infra3ResourceUUID)
 			if err != nil {
 				// Why did it fail?
 				return
@@ -680,13 +680,13 @@ func (h APIHandler) ResourceLogWatcher(c *gin.Context) {
 }
 
 // Check if terraform namespace/name resource exists in vcluster
-func getResource(parentClientset kubernetes.Interface, clusterName, namespace, name string, ctx context.Context) (*tfv1beta1.Terraform, error) {
+func getResource(parentClientset kubernetes.Interface, clusterName, namespace, name string, ctx context.Context) (*infra3v1.Tf, error) {
 	config, err := getVclusterConfig(parentClientset, "internal", clusterName)
 	if err != nil {
 		return nil, err
 	}
-	tfoclientset := tfo.NewForConfigOrDie(config)
-	return tfoclientset.TfV1beta1().Terraforms(namespace).Get(ctx, name, metav1.GetOptions{})
+	infra3Clientset := infra3clientset.NewForConfigOrDie(config)
+	return infra3Clientset.Infra3V1().Tves(namespace).Get(ctx, name, metav1.GetOptions{})
 
 }
 
@@ -962,7 +962,7 @@ func (podExec *PodExec) Write(p []byte) (n int, err error) {
 // the title of a terminal.
 func (p *PodExec) WindowTitleVariables() map[string]interface{} {
 	return map[string]interface{}{
-		"command":  "tfo",
+		"command":  "infra3",
 		"hostname": "localhost",
 	}
 }
@@ -985,8 +985,8 @@ func (p *PodExec) Close() error {
 }
 
 func createDebugPodManifest(c *gin.Context, config *rest.Config, namespace, name string, command []string) (*corev1.Pod, error) {
-	tfoclientset := tfo.NewForConfigOrDie(config)
-	tfclient := tfoclientset.TfV1beta1().Terraforms(namespace)
+	infra3Clientset := infra3clientset.NewForConfigOrDie(config)
+	tfclient := infra3Clientset.Infra3V1().Tves(namespace)
 	tf, err := tfclient.Get(c, name, metav1.GetOptions{})
 	if err != nil {
 		return nil, err
@@ -1195,21 +1195,21 @@ func podTimeToLive(podStatusStartTime time.Time, podName, namespace string, clie
 
 // }
 
-func generatePod(tf *tfv1beta1.Terraform, command []string) *corev1.Pod {
-	terraformVersion := tf.Spec.TerraformVersion
-	if terraformVersion == "" {
-		terraformVersion = "1.1.5"
+func generatePod(tf *infra3v1.Tf, command []string) *corev1.Pod {
+	tfVersion := tf.Spec.TfVersion
+	if tfVersion == "" {
+		tfVersion = "1.1.5"
 	}
 	generation := fmt.Sprint(tf.Generation)
 	versionedName := tf.Status.PodNamePrefix + "-v" + generation
 	generateName := versionedName + "-debug-"
-	generationPath := "/home/tfo-runner/generations/" + generation
+	generationPath := "/home/infra3-runner/generations/" + generation
 	env := []corev1.EnvVar{}
 	envFrom := []corev1.EnvFromSource{}
 	annotations := make(map[string]string)
 	labels := make(map[string]string)
 	for _, taskOption := range tf.Spec.TaskOptions {
-		if tfv1beta1.ListContainsTask(taskOption.For, "*") {
+		if infra3v1.ListContainsTask(taskOption.For, "*") {
 			env = append(env, taskOption.Env...)
 			envFrom = append(envFrom, taskOption.EnvFrom...)
 			for key, value := range taskOption.Annotations {
@@ -1247,13 +1247,13 @@ func generatePod(tf *tfv1beta1.Terraform, command []string) *corev1.Pod {
 		},
 		{
 			Name:  "TFO_TERRAFORM_VERSION",
-			Value: tf.Spec.TerraformVersion,
+			Value: tf.Spec.TfVersion,
 		},
 	}...)
 
 	volumes := []corev1.Volume{
 		{
-			Name: "tfohome",
+			Name: "infra3home",
 			VolumeSource: corev1.VolumeSource{
 				PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
 					ClaimName: tf.Status.PodNamePrefix,
@@ -1264,14 +1264,14 @@ func generatePod(tf *tfv1beta1.Terraform, command []string) *corev1.Pod {
 	}
 	volumeMounts := []corev1.VolumeMount{
 		{
-			Name:      "tfohome",
-			MountPath: "/home/tfo-runner",
+			Name:      "infra3home",
+			MountPath: "/home/infra3-runner",
 			ReadOnly:  false,
 		},
 	}
 	env = append(env, corev1.EnvVar{
 		Name:  "TFO_ROOT_PATH",
-		Value: "/home/tfo-runner",
+		Value: "/home/infra3-runner",
 	})
 
 	optional := true
@@ -1312,7 +1312,7 @@ func generatePod(tf *tfv1beta1.Terraform, command []string) *corev1.Pod {
 	}
 
 	for _, c := range tf.Spec.Credentials {
-		if (tfv1beta1.SecretNameRef{}) != c.SecretNameRef {
+		if (infra3v1.SecretNameRef{}) != c.SecretNameRef {
 			envFrom = append(envFrom, []corev1.EnvFromSource{
 				{
 					SecretRef: &corev1.SecretEnvSource{
@@ -1325,12 +1325,12 @@ func generatePod(tf *tfv1beta1.Terraform, command []string) *corev1.Pod {
 		}
 	}
 
-	labels["terraforms.tf.galleybytes.com/generation"] = generation
-	labels["terraforms.tf.galleybytes.com/resourceName"] = tf.Name
-	labels["terraforms.tf.galleybytes.com/podPrefix"] = tf.Status.PodNamePrefix
-	labels["terraforms.tf.galleybytes.com/terraformVersion"] = tf.Spec.TerraformVersion
-	labels["app.kubernetes.io/name"] = "terraform-operator"
-	labels["app.kubernetes.io/component"] = "terraform-operator-cli"
+	labels["tfs.infra3.galleybytes.com/generation"] = generation
+	labels["tfs.infra3.galleybytes.com/resourceName"] = tf.Name
+	labels["tfs.infra3.galleybytes.com/podPrefix"] = tf.Status.PodNamePrefix
+	labels["tfs.infra3.galleybytes.com/tfVersion"] = tf.Spec.TfVersion
+	labels["app.kubernetes.io/name"] = "infra3"
+	labels["app.kubernetes.io/component"] = "infra3-cli"
 	labels["app.kubernetes.io/instance"] = "debug"
 	labels["app.kubernetes.io/created-by"] = "cli"
 
@@ -1364,7 +1364,7 @@ func generatePod(tf *tfv1beta1.Terraform, command []string) *corev1.Pod {
 	containers = append(containers, corev1.Container{
 		SecurityContext: securityContext,
 		Name:            "debug",
-		Image:           "ghcr.io/galleybytes/terraform-operator-tftaskv1.1.0:" + terraformVersion,
+		Image:           "ghcr.io/galleybytes/terraform-operator-tftaskv1.1.0:" + tfVersion,
 		Command:         command,
 		ImagePullPolicy: corev1.PullIfNotPresent,
 		EnvFrom:         envFrom,

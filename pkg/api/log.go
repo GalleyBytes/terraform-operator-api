@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/galleybytes/terraform-operator-api/pkg/common/models"
+	"github.com/galleybytes/infra3-stella/pkg/common/models"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -54,7 +54,7 @@ func (h APIHandler) AddTaskPod(c *gin.Context) {
 		TaskType:            jsonData.TaskName,
 		Generation:          generation,
 		Rerun:               rerunID,
-		TFOResourceUUID:     resourceUUID,
+		Infra3ResourceUUID:  resourceUUID,
 		InClusterGeneration: jsonData.InClusterGeneration,
 		CreatedAt:           now,
 		UpdatedAt:           now,
@@ -77,7 +77,7 @@ func (h APIHandler) AddTaskPod(c *gin.Context) {
 		return
 	}
 
-	h.Cache.Set(taskPod.TFOResourceUUID, "", 20*time.Second)
+	h.Cache.Set(taskPod.Infra3ResourceUUID, "", 20*time.Second)
 
 	c.JSON(http.StatusNoContent, nil)
 
@@ -86,7 +86,7 @@ func (h APIHandler) AddTaskPod(c *gin.Context) {
 // Write or update logs in database
 func saveTaskLog(db *gorm.DB, taskUUID, content string) error {
 	now := time.Now().UTC()
-	taskLog := models.TFOTaskLog{
+	taskLog := models.Infra3TaskLog{
 		Model: gorm.Model{
 			CreatedAt: now,
 			UpdatedAt: now,

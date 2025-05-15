@@ -8,8 +8,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/galleybytes/terraform-operator-api/pkg/api"
-	"github.com/galleybytes/terraform-operator-api/pkg/common/db"
+	"github.com/galleybytes/infra3-stella/pkg/api"
+	"github.com/galleybytes/infra3-stella/pkg/common/db"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 	"gorm.io/gorm"

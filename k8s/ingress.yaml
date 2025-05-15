@@ -1,7 +1,7 @@
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: terraform-operator-api
+  name: infra3-stella
   namespace: tf-system
 spec:
   rules:
@@ -11,6 +11,6 @@ spec:
         path: "/api/v1"
         backend:
           service:
-            name: terraform-operator-api
+            name: infra3-stella
             port:
               number: 80

@@ -104,11 +104,11 @@ func (h APIHandler) RegisterRoutes() {
 	cluster := authenticatedAPIV1.Group("/cluster")
 	cluster.POST("/", h.AddCluster) // Resource from Add/Update/Delete event
 	cluster.GET("/:cluster_name/health", h.VClusterHealth)
-	cluster.GET("/:cluster_name/tfohealth", h.VClusterTFOHealth)
+	cluster.GET("/:cluster_name/infra3health", h.VClusterInfra3Health)
 	cluster.PUT("/:cluster_name/sync-dependencies", h.SyncEvent)
 	cluster.POST("/:cluster_name/event", h.ResourceEvent) // routes.GET("/cluster-name/:cluster_name", h.GetCluster) // to be removed
 	cluster.PUT("/:cluster_name/event", h.ResourceEvent)
-	cluster.DELETE("/:cluster_name/event/:tfo_resource_uuid", h.ResourceEvent)
+	cluster.DELETE("/:cluster_name/event/:infra3_resource_uuid", h.ResourceEvent)
 	cluster.GET("/:cluster_name/resource/:namespace/:name/poll", h.ResourcePoll) // Poll for resource objects in the cluster
 	cluster.PATCH("/:cluster_name/resource/:namespace/:name/token", h.manualTokenPatch)
 	cluster.GET("/:cluster_name/resource/:namespace/:name/debug", h.Debugger)
@@ -131,22 +131,22 @@ func (h APIHandler) RegisterRoutes() {
 
 	// List Clusters
 	authenticatedAPIV1.GET("/clusters", h.ListClusters)
-	authenticatedAPIV1.GET("/resource/:tfo_resource_uuid", h.GetResourceByUUID)
+	authenticatedAPIV1.GET("/resource/:infra3_resource_uuid", h.GetResourceByUUID)
 	// List Generations
-	authenticatedAPIV1.GET("/resource/:tfo_resource_uuid/generations", h.GetDistinctGeneration)
+	authenticatedAPIV1.GET("/resource/:infra3_resource_uuid/generations", h.GetDistinctGeneration)
 	// ReourceSpec
-	authenticatedAPIV1.GET("/resource/:tfo_resource_uuid/generation/:generation/resource-spec", h.getWorkflowResourceConfiguration)
-	authenticatedAPIV1.GET("/resource/:tfo_resource_uuid/generation/:generation/tasks", h.getAllTasksGeneratedForResource)
-	authenticatedAPIV1.GET("/resource/:tfo_resource_uuid/generation/:generation/latest-tasks", h.getHighestRerunOfTasksGeneratedForResource)
-	authenticatedAPIV1.GET("/resource/:tfo_resource_uuid/generation/:generation/approval-status", h.getApprovalStatusForResource)
-	authenticatedAPIV1.POST("/resource/:tfo_resource_uuid/generation/:generation/approval", h.setApprovalForResource)
-	authenticatedAPIV1.GET("/resource/:tfo_resource_uuid/generation/:generation/logs", h.preLogs)
-	authenticatedAPIV1.GET("/resource/:tfo_resource_uuid/generation/:generation/ws-logs", h.websocketLogs)
+	authenticatedAPIV1.GET("/resource/:infra3_resource_uuid/generation/:generation/resource-spec", h.getWorkflowResourceConfiguration)
+	authenticatedAPIV1.GET("/resource/:infra3_resource_uuid/generation/:generation/tasks", h.getAllTasksGeneratedForResource)
+	authenticatedAPIV1.GET("/resource/:infra3_resource_uuid/generation/:generation/latest-tasks", h.getHighestRerunOfTasksGeneratedForResource)
+	authenticatedAPIV1.GET("/resource/:infra3_resource_uuid/generation/:generation/approval-status", h.getApprovalStatusForResource)
+	authenticatedAPIV1.POST("/resource/:infra3_resource_uuid/generation/:generation/approval", h.setApprovalForResource)
+	authenticatedAPIV1.GET("/resource/:infra3_resource_uuid/generation/:generation/logs", h.preLogs)
+	authenticatedAPIV1.GET("/resource/:infra3_resource_uuid/generation/:generation/ws-logs", h.websocketLogs)
 
-	// authenticatedAPIV1.GET("/resource/:tfo_resource_uuid/logs", h.GetClustersResourcesLogs)
-	// authenticatedAPIV1.GET("/resource/:tfo_resource_uuid/logs/generation/:generation", h.GetClustersResourcesLogs)
-	// authenticatedAPIV1.GET("/resource/:tfo_resource_uuid/logs/generation/:generation/task/:task_type", h.GetClustersResourcesLogs)
-	// authenticatedAPIV1.GET("/resource/:tfo_resource_uuid/logs/generation/:generation/task/:task_type/rerun/:rerun", h.GetClustersResourcesLogs)
+	// authenticatedAPIV1.GET("/resource/:infra3_resource_uuid/logs", h.GetClustersResourcesLogs)
+	// authenticatedAPIV1.GET("/resource/:infra3_resource_uuid/logs/generation/:generation", h.GetClustersResourcesLogs)
+	// authenticatedAPIV1.GET("/resource/:infra3_resource_uuid/logs/generation/:generation/task/:task_type", h.GetClustersResourcesLogs)
+	// authenticatedAPIV1.GET("/resource/:infra3_resource_uuid/logs/generation/:generation/task/:task_type/rerun/:rerun", h.GetClustersResourcesLogs)
 	// authenticatedAPIV1.GET("/task/:task_pod_uuid/logs", h.GetTFOTaskLogsViaTask)
 	// authenticatedAPIV1.GET("/task/:task_pod_uuid", h.GetTaskPod) // TODO Should getting a task out of band (ie not with cluster info) be allowed?
 
@@ -159,11 +159,11 @@ func (h APIHandler) RegisterRoutes() {
 	authenticatedTask.GET("/:task_pod_uuid/approval-status", h.GetApprovalStatusViaTaskPodUUID)
 
 	// Approval
-	authenticatedAPIV1.GET("/resource/:tfo_resource_uuid/approval-status", h.GetApprovalStatus)
+	authenticatedAPIV1.GET("/resource/:infra3_resource_uuid/approval-status", h.GetApprovalStatus)
 	authenticatedAPIV1.POST("/approval/:task_pod_uuid", h.UpdateApproval)
 	authenticatedAPIV1.GET("/approvals", h.AllApprovals)
 
 	// Websockets will be prefixed with /ws
 	sockets := h.Server.Group("/ws/")
-	sockets.GET("/:tfo_resource_uuid", h.ResourceLogWatcher)
+	sockets.GET("/:infra3_resource_uuid", h.ResourceLogWatcher)
 }

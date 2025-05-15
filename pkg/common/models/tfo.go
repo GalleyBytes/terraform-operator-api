@@ -6,7 +6,7 @@ import (
 	"gorm.io/gorm"
 )
 
-type TFOTaskLog struct {
+type Infra3TaskLog struct {
 	gorm.Model
 	TaskPod     TaskPod `json:"task_pod,omitempty"`
 	TaskPodUUID string  `json:"task_pod_uuid"`
@@ -14,7 +14,7 @@ type TFOTaskLog struct {
 	Size        uint64  `json:"size"`
 }
 
-type TFOResource struct {
+type Infra3Resource struct {
 	UUID              string         `json:"uuid" gorm:"primaryKey"`
 	CreatedBy         string         `json:"created_by"`
 	CreatedAt         time.Time      `json:"created_at"`
@@ -37,15 +37,15 @@ type Cluster struct {
 	Name string `json:"name" `
 }
 
-type TFOResourceSpec struct {
+type Infra3ResourceSpec struct {
 	gorm.Model
-	TFOResource     TFOResource `json:"tfo_resource,omitempty"`
-	TFOResourceUUID string      `json:"tfo_resource_uuid"`
-	Generation      string      `json:"generation"`
-	ResourceSpec    string      `json:"resource_spec"`
-	TaskToken       string      `json:"task_token"`
-	Annotations     string      `json:"annotations"`
-	Labels          string      `json:"labels"`
+	Infra3Resource     Infra3Resource `json:"infra3_resource,omitempty"`
+	Infra3ResourceUUID string         `json:"infra3_resource_uuid"`
+	Generation         string         `json:"generation"`
+	ResourceSpec       string         `json:"resource_spec"`
+	TaskToken          string         `json:"task_token"`
+	Annotations        string         `json:"annotations"`
+	Labels             string         `json:"labels"`
 }
 
 type TaskPod struct {
@@ -60,8 +60,8 @@ type TaskPod struct {
 	Rerun               int            `json:"rerun"`
 	Generation          string         `json:"generation"`
 	InClusterGeneration string         `json:"in_cluster_generation"`
-	TFOResource         TFOResource    `json:"tfo_resource,omitempty"`
-	TFOResourceUUID     string         `json:"tfo_resource_uuid"`
+	Infra3Resource      Infra3Resource `json:"infra3_resource,omitempty"`
+	Infra3ResourceUUID  string         `json:"infra3_resource_uuid"`
 }
 
 type Approval struct {
@@ -82,8 +82,8 @@ type RefreshToken struct {
 	CanceledAt     *time.Time
 	CanceledReason string
 
-	TFOResourceSpec   TFOResourceSpec `json:"tfo_resource_spec,omitempty"`
-	TFOResourceSpecID uint            `json:"tfo_resource_spec_id"`
+	Infra3ResourceSpec   Infra3ResourceSpec `json:"infra3_resource_spec,omitempty"`
+	Infra3ResourceSpecID uint               `json:"infra3_resource_spec_id"`
 }
 
 const (

@@ -5,57 +5,57 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/galleybytes/terraform-operator-api/pkg/common/models"
+	"github.com/galleybytes/infra3-stella/pkg/common/models"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
 
 func resourceLog(db *gorm.DB, taskUUID string) *gorm.DB {
-	return db.Table("tfo_task_logs").
+	return db.Table("infra3_task_logs").
 		Select("message, updated_at, created_at").
 		Where("task_pod_uuid = ?", taskUUID)
 }
 
-func requiredApprovalPodUUID(db *gorm.DB, tfoResourceUUID, generation string) *gorm.DB {
+func requiredApprovalPodUUID(db *gorm.DB, infra3ResourceUUID, generation string) *gorm.DB {
 	maxRerun := db.Table("task_pods").
 		Select("MAX(rerun)").
-		Where("tfo_resource_uuid = ? AND generation = ?", tfoResourceUUID, generation)
+		Where("infra3_resource_uuid = ? AND generation = ?", infra3ResourceUUID, generation)
 
 	maxInClusterGeneration := db.Table("task_pods").
 		Select("MAX(in_cluster_generation)").
-		Where("tfo_resource_uuid = ? AND generation = ? AND rerun = (?)", tfoResourceUUID, generation, maxRerun)
+		Where("infra3_resource_uuid = ? AND generation = ? AND rerun = (?)", infra3ResourceUUID, generation, maxRerun)
 
 	return db.Table("task_pods").
 		Select("uuid").
-		Where("tfo_resource_uuid = ? AND generation = ? AND  task_type = 'plan' AND rerun = (?) and in_cluster_generation = (?)", tfoResourceUUID, generation, maxRerun, maxInClusterGeneration)
+		Where("infra3_resource_uuid = ? AND generation = ? AND  task_type = 'plan' AND rerun = (?) and in_cluster_generation = (?)", infra3ResourceUUID, generation, maxRerun, maxInClusterGeneration)
 
 }
 
-func approvalStatusBasedOnLastestRerunOfResource(db *gorm.DB, tfoResourceUUID, generation string) *gorm.DB {
-	taskPodUUID := requiredApprovalPodUUID(db, tfoResourceUUID, generation)
+func approvalStatusBasedOnLastestRerunOfResource(db *gorm.DB, infra3ResourceUUID, generation string) *gorm.DB {
+	taskPodUUID := requiredApprovalPodUUID(db, infra3ResourceUUID, generation)
 	return db.Debug().Table("approvals").
 		Select("*").
 		Where("task_pod_uuid = (?)", taskPodUUID)
 }
 
-func highestRerunCountForTasksGeneratedForResource(db *gorm.DB, tfoResourceUUID, generation string) *gorm.DB {
+func highestRerunCountForTasksGeneratedForResource(db *gorm.DB, infra3ResourceUUID, generation string) *gorm.DB {
 	sub := db.Table("task_pods").
 		Select("MAX(rerun)").
-		Where("tfo_resource_uuid = ? AND generation = ?", tfoResourceUUID, generation)
+		Where("infra3_resource_uuid = ? AND generation = ?", infra3ResourceUUID, generation)
 
 	return db.Debug().Table("task_pods").
 		Select("*").
-		Where("tfo_resource_uuid = ? AND generation = ? AND rerun = (?)", tfoResourceUUID, generation, sub)
+		Where("infra3_resource_uuid = ? AND generation = ? AND rerun = (?)", infra3ResourceUUID, generation, sub)
 }
 
-func allTasksGeneratedForResource(db *gorm.DB, tfoResourceUUID, generation string) *gorm.DB {
+func allTasksGeneratedForResource(db *gorm.DB, infra3ResourceUUID, generation string) *gorm.DB {
 	return db.Debug().Table("task_pods").
 		Select("*").
-		Where("tfo_resource_uuid = ? and generation = ?", tfoResourceUUID, generation)
+		Where("infra3_resource_uuid = ? and generation = ?", infra3ResourceUUID, generation)
 }
 
 func resourceSpec(db *gorm.DB, uuid, generation string) *gorm.DB {
-	return db.Table("tfo_resource_specs").
+	return db.Table("infra3_resource_specs").
 		Select(`
 			generation,
 			resource_spec,
@@ -64,7 +64,7 @@ func resourceSpec(db *gorm.DB, uuid, generation string) *gorm.DB {
 			created_at,
 			updated_at
 		`).
-		Where("tfo_resource_uuid = ? and generation = ?", uuid, generation)
+		Where("infra3_resource_uuid = ? and generation = ?", uuid, generation)
 }
 
 func approvalQuery(db *gorm.DB, uuid string) *gorm.DB {
@@ -74,39 +74,39 @@ func approvalQuery(db *gorm.DB, uuid string) *gorm.DB {
 }
 
 func workflow(db *gorm.DB, clusterName uint, namespace, name string) *gorm.DB {
-	return db.Table("tfo_resources").
+	return db.Table("infra3_resources").
 		Select(`
-			tfo_resources.*,
+			infra3_resources.*,
 			clusters.name AS cluster_name
 		`).
-		Joins("JOIN clusters ON tfo_resources.cluster_id = clusters.id").
-		Where("tfo_resources.deleted_at is null and tfo_resources.cluster_id = ? and tfo_resources.namespace = ? and tfo_resources.name = ?", clusterName, namespace, name)
+		Joins("JOIN clusters ON infra3_resources.cluster_id = clusters.id").
+		Where("infra3_resources.deleted_at is null and infra3_resources.cluster_id = ? and infra3_resources.namespace = ? and infra3_resources.name = ?", clusterName, namespace, name)
 }
 
 func workflows(db *gorm.DB, name, namespace, clusterName string, offset, limit int) *gorm.DB {
 	queryString := fmt.Sprintf(`
 		SELECT
-			tfo_resources.uuid,
-			tfo_resources.current_generation,
-			tfo_resources.name,
-			tfo_resources.namespace,
-			tfo_resources.current_state,
-			tfo_resources.created_at,
+			infra3_resources.uuid,
+			infra3_resources.current_generation,
+			infra3_resources.name,
+			infra3_resources.namespace,
+			infra3_resources.current_state,
+			infra3_resources.created_at,
 			clusters.name as cluster_name,
-			tfo_resources.updated_at as resource_updated_at,
+			infra3_resources.updated_at as resource_updated_at,
 			logs.updated_at as updated_at
-		FROM tfo_resources
+		FROM infra3_resources
 		LEFT JOIN (
-			SELECT task_pods.tfo_resource_uuid, MAX(tfo_task_logs.updated_at) as updated_at
-			FROM tfo_task_logs
-			JOIN task_pods on task_pods.uuid = tfo_task_logs.task_pod_uuid
-			WHERE tfo_task_logs.updated_at IS NOT NULL
-			GROUP BY task_pods.tfo_resource_uuid
-		) logs ON logs.tfo_resource_uuid = tfo_resources.uuid
-		JOIN clusters ON clusters.id = tfo_resources.cluster_id
-		WHERE tfo_resources.deleted_at IS NULL
-		AND tfo_resources.name LIKE '%%%s%%'
-		AND tfo_resources.namespace LIKE '%%%s%%'
+			SELECT task_pods.infra3_resource_uuid, MAX(infra3_task_logs.updated_at) as updated_at
+			FROM infra3_task_logs
+			JOIN task_pods on task_pods.uuid = infra3_task_logs.task_pod_uuid
+			WHERE infra3_task_logs.updated_at IS NOT NULL
+			GROUP BY task_pods.infra3_resource_uuid
+		) logs ON logs.infra3_resource_uuid = infra3_resources.uuid
+		JOIN clusters ON clusters.id = infra3_resources.cluster_id
+		WHERE infra3_resources.deleted_at IS NULL
+		AND infra3_resources.name LIKE '%%%s%%'
+		AND infra3_resources.namespace LIKE '%%%s%%'
 		AND clusters.name LIKE '%%%s%%'
 		ORDER BY logs.updated_at DESC NULLS LAST
 		OFFSET %d
@@ -159,8 +159,8 @@ func (h APIHandler) TotalResources(c *gin.Context) {
 
 func (h APIHandler) TotalFailedResources(c *gin.Context) {
 	var count int64
-	var tfoResources []models.TFOResource
-	h.DB.Model(&tfoResources).Where("current_state = 'failed'").Count(&count)
+	var infra3Resources []models.Infra3Resource
+	h.DB.Model(&infra3Resources).Where("current_state = 'failed'").Count(&count)
 	c.JSON(http.StatusOK, response(http.StatusOK, "", []int64{count}))
 }
 

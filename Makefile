@@ -1,5 +1,5 @@
 DOCKER_REPO ?= ghcr.io/galleybytes
-IMAGE_NAME ?= terraform-operator-api
+IMAGE_NAME ?= infra3-stella
 VERSION ?= $(shell  git describe --tags --dirty)
 ifeq ($(VERSION),)
 VERSION := 0.0.0

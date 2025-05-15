@@ -3,7 +3,7 @@ package db
 import (
 	"log"
 
-	"github.com/galleybytes/terraform-operator-api/pkg/common/models"
+	"github.com/galleybytes/infra3-stella/pkg/common/models"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
@@ -15,10 +15,10 @@ func Init(url string) *gorm.DB {
 	}
 
 	err = db.AutoMigrate(
-		&models.TFOResource{},
-		&models.TFOTaskLog{},
+		&models.Infra3Resource{},
+		&models.Infra3TaskLog{},
 		&models.Cluster{},
-		&models.TFOResourceSpec{},
+		&models.Infra3ResourceSpec{},
 		&models.Approval{},
 		&models.TaskPod{},
 		&models.RefreshToken{},

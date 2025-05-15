@@ -1,23 +1,23 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: terraform-operator-api
+  name: infra3-stella
   namespace: tf-system
 spec:
   replicas: 1
   selector:
     matchLabels:
-      service: terraform-operator
+      service: infra3
       component: api
   strategy:
     type: Recreate
   template:
     metadata:
       labels:
-        service: terraform-operator
+        service: infra3
         component: api
     spec:
-      serviceAccount: terraform-operator-api
+      serviceAccount: infra3-stella
       containers:
       - env:
         - name: PORT
@@ -31,7 +31,7 @@ spec:
           value: isa
         - name: ADMIN_PASSWORD
           value: $2a$10$2ap6bphr5ZBkEMTBb/ZoT.zrY7lUwzCW2u1n5tIeVugtVpjMRW9Fe
-        image: ghcr.io/galleybytes/terraform-operator-api:0.0.0
+        image: ghcr.io/galleybytes/infra3-stella:0.0.0
         imagePullPolicy: IfNotPresent
         name: api
         ports:

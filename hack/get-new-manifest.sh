@@ -11,13 +11,13 @@ metadata:
 
 items:' >"$OUTPUT_FILE"
 
-helm template tfo-virtual-cluster vcluster --repo https://charts.loft.sh -n namespace-placeholder |
+helm template infra3-virtual-cluster vcluster --repo https://charts.loft.sh -n namespace-placeholder |
     sed 's/^---//g' |
     sed 's/namespace-placeholder/\"{{ .namespace }}\"/g' |
     sed "s/^/  /g" |
     sed "s/^  #/- #/g" >>"$OUTPUT_FILE"
 
-curl -s https://raw.githubusercontent.com/GalleyBytes/terraform-operator/master/deploy/bundles/v0.13.3/v0.13.3.yaml |
+curl -s https://raw.githubusercontent.com/GalleyBytes/infra3/master/deploy/bundles/vTBD/vTBD.yaml |
     sed "s/^/      /g" >"$TFO_BUNDLE"
 
 

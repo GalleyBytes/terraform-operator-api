@@ -1,4 +1,4 @@
-# Terraform Operator API
+# Infra3 Stella API
 
 The Terraform Operator API provides endpoints for managing infrastructure resources using Terraform. This README explains how to set up the development environment and configure the server.
 
@@ -14,11 +14,11 @@ Before running the server, make sure you have the following prerequisites instal
 
 1. Clone the repository:
 
-   `git clone https://github.com/GalleyBytes/terraform-operator-api.git `
+   `git clone https://github.com/GalleyBytes/infra3-stella.git `
 
 2. Navigate to the project directory:
 
-   `cd terraform-operator-api `
+   `cd infra3-stella `
 
 3. Install Go dependencies:
 
@@ -48,10 +48,10 @@ Log in to the postgres server. For example, using `psql` run:
 psql -U postgres -h localhost -p 5432 -d postgres
 ```
 
-In the `psql` terminal, create a database for tfoapi
+In the `psql` terminal, create a database for infra3api
 
 ```sql
-CREATE DATABASE tfoapi;
+CREATE DATABASE infra3api;
 ```
 
 ### Terraform Custom Resource Definition
@@ -59,7 +59,7 @@ CREATE DATABASE tfoapi;
 Install the Terraform CRD that will match the one that will be created in the vcluster. In general, the lastest if preferred:
 
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/GalleyBytes/terraform-operator/refs/heads/master/deploy/crds/tf.galleybytes.com_terraforms_crd.yaml
+kubectl apply -f https://raw.githubusercontent.com/GalleyBytes/infra3/refs/heads/master/deploy/crds/tf.galleybytes.com_terraforms_crd.yaml
 ```
 
 
@@ -83,7 +83,7 @@ __Start the API Server__
 Start the API server. Use the databse url that matches how you set your development database.
 
 ```bash
-go run cmd/main.go --db-url postgres://postgres:pass@localhost:5432/tfoapi
+go run cmd/main.go --db-url postgres://postgres:pass@localhost:5432/infra3api
 ```
 
 
@@ -116,7 +116,7 @@ Port forward the vcluster:
 
 ```bash
 CLIENT_NAME=docker-desktop
-kubectl port-forward -n internal-$CLIENT_NAME svc/tfo-virtual-cluster 8443:443
+kubectl port-forward -n internal-$CLIENT_NAME svc/infra3-virtual-cluster 8443:443
 ```
 
 After running the port-forward command, the remote controller should be ready to go in a minute.

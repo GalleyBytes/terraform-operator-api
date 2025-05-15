@@ -16,10 +16,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/galleybytes/terraform-operator-api/pkg/common/models"
-	"github.com/galleybytes/terraform-operator-api/pkg/util"
-	tfv1beta1 "github.com/galleybytes/terraform-operator/pkg/apis/tf/v1beta1"
-	tfo "github.com/galleybytes/terraform-operator/pkg/client/clientset/versioned"
+	infra3v1 "github.com/galleybytes/infra3/pkg/apis/infra3/v1"
+	infra3clientset "github.com/galleybytes/infra3/pkg/client/clientset/versioned"
+	"github.com/galleybytes/infra3-stella/pkg/common/models"
+	"github.com/galleybytes/infra3-stella/pkg/util"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/gorilla/websocket"
@@ -61,9 +61,9 @@ var taskTypesInOrder = []string{
 type rawData map[string][]byte
 
 type resource struct {
-	tfv1beta1.Terraform `json:",inline"`
-	// TFOResourceSpec models.TFOResourceSpec `json:"tfo_resource_spec"`
-	// TFOResource     models.TFOResource     `json:"tfo_resource"`
+	infra3v1.Tf `json:",inline"`
+	// TFOResourceSpec models.TFOResourceSpec `json:"infra3_resource_spec"`
+	// TFOResource     models.TFOResource     `json:"infra3_resource"`
 }
 
 type PodInfo struct {
@@ -93,15 +93,15 @@ func (r resource) validate() error {
 	return nil
 }
 
-func (r resource) Parse(clusterID uint) (*models.TFOResource, *models.TFOResourceSpec, error) {
-	// var tfoResource models.TFOResource
-	// var tfoResourceSpec models.TFOResourceSpec
+func (r resource) Parse(clusterID uint) (*models.Infra3Resource, *models.Infra3ResourceSpec, error) {
+	// var infra3Resource models.TFOResource
+	// var infra3ResourceSpec models.TFOResourceSpec
 
 	uuid := string(r.ObjectMeta.UID)
 	annotations := mustJsonify(r.Annotations)
 	labels := mustJsonify(r.Labels)
 	currentGeneration := strconv.FormatInt(r.Generation, 10)
-	tfoResource := models.TFOResource{
+	infra3Resource := models.Infra3Resource{
 		Name:              r.Name,
 		Namespace:         r.Namespace,
 		UUID:              uuid,
@@ -114,15 +114,15 @@ func (r resource) Parse(clusterID uint) (*models.TFOResource, *models.TFOResourc
 	if err != nil {
 		return nil, nil, err
 	}
-	tfoResourceSpec := models.TFOResourceSpec{
-		TFOResourceUUID: uuid,
-		Generation:      currentGeneration,
-		ResourceSpec:    spec,
-		Annotations:     annotations,
-		Labels:          labels,
+	infra3ResourceSpec := models.Infra3ResourceSpec{
+		Infra3ResourceUUID: uuid,
+		Generation:         currentGeneration,
+		ResourceSpec:       spec,
+		Annotations:        annotations,
+		Labels:             labels,
 	}
 
-	return &tfoResource, &tfoResourceSpec, nil
+	return &infra3Resource, &infra3ResourceSpec, nil
 }
 
 func (h APIHandler) AddCluster(c *gin.Context) {
@@ -302,7 +302,7 @@ func (h APIHandler) VClusterHealth(c *gin.Context) {
 	c.JSON(http.StatusNoContent, nil)
 }
 
-func (h APIHandler) VClusterTFOHealth(c *gin.Context) {
+func (h APIHandler) VClusterInfra3Health(c *gin.Context) {
 	clusterName := c.Param("cluster_name")
 	clusterID := h.getClusterID(clusterName)
 	if clusterID == 0 {
@@ -314,18 +314,18 @@ func (h APIHandler) VClusterTFOHealth(c *gin.Context) {
 		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
 		return
 	}
-	tfoclientset := tfo.NewForConfigOrDie(config)
-	if _, err = tfoclientset.TfV1beta1().Terraforms("").List(c, metav1.ListOptions{}); err != nil {
-		// tfo client cannot query crds and therefore tfo health is not ready
+	infra3Clientset := infra3clientset.NewForConfigOrDie(config)
+	if _, err = infra3Clientset.Infra3V1().Tves("").List(c, metav1.ListOptions{}); err != nil {
+		// infra3 client cannot query crds and therefore infra3 health is not ready
 		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
 		return
 	}
 
-	// Following checks if tfo is running. TFO must be installed similar to the bundled packages in the
-	// terraform-operator github repo.
+	// Following checks if infra3 is running. TFO must be installed similar to the bundled packages in the
+	// infra3 github repo.
 	clientset := kubernetes.NewForConfigOrDie(config)
 	n, err := clientset.CoreV1().Pods("tf-system").List(c, metav1.ListOptions{
-		LabelSelector: "app=terraform-operator,component=controller",
+		LabelSelector: "app=infra3,component=controller",
 		FieldSelector: "status.phase=Running",
 	})
 	if err != nil {
@@ -363,8 +363,8 @@ func rerun(parentClientset kubernetes.Interface, clusterName, namespace, name, r
 	if err != nil {
 		return err
 	}
-	tfoclientset := tfo.NewForConfigOrDie(config)
-	resource, err := tfoclientset.TfV1beta1().Terraforms(namespace).Get(ctx, name, metav1.GetOptions{})
+	infra3Clientset := infra3clientset.NewForConfigOrDie(config)
+	resource, err := infra3Clientset.Infra3V1().Tves(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return err
 	}
@@ -374,7 +374,7 @@ func rerun(parentClientset kubernetes.Interface, clusterName, namespace, name, r
 	}
 
 	resource.Labels["kubernetes.io/change-cause"] = fmt.Sprintf("%s-%s", rerunLabelValue, time.Now().Format("20060102150405"))
-	_, err = tfoclientset.TfV1beta1().Terraforms(namespace).Update(ctx, resource, metav1.UpdateOptions{})
+	_, err = infra3Clientset.Infra3V1().Tves(namespace).Update(ctx, resource, metav1.UpdateOptions{})
 	if err != nil {
 		return err
 	}
@@ -413,16 +413,16 @@ func (h APIHandler) ResourceStatusCheckViaTask(c *gin.Context) {
 	resourceUUID := claims["resourceUUID"]
 
 	// new resources must not already exist in the database
-	tfoResourceFromDatabase := models.TFOResource{}
-	result := h.DB.Where("uuid = ?", resourceUUID).First(&tfoResourceFromDatabase)
+	infra3ResourceFromDatabase := models.Infra3Resource{}
+	result := h.DB.Where("uuid = ?", resourceUUID).First(&infra3ResourceFromDatabase)
 	if result.Error != nil {
-		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("error getting tfoResource: %v", result.Error), nil))
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("error getting infra3Resource: %v", result.Error), nil))
 		return
 	}
 
-	clusterName := getClusterName(tfoResourceFromDatabase.ClusterID, h.DB)
-	namespace := tfoResourceFromDatabase.Namespace
-	name := tfoResourceFromDatabase.Name
+	clusterName := getClusterName(infra3ResourceFromDatabase.ClusterID, h.DB)
+	namespace := infra3ResourceFromDatabase.Namespace
+	name := infra3ResourceFromDatabase.Name
 
 	statusCheckAndUpdate(c, h.DB, h.clientset, clusterName, namespace, name)
 }
@@ -458,11 +458,11 @@ OptLoop:
 		}
 	}
 	if uuid != "" {
-		tfoResourceFromDatabase := models.TFOResource{}
-		result := db.Where("uuid = ?", uuid).First(&tfoResourceFromDatabase)
+		infra3ResourceFromDatabase := models.Infra3Resource{}
+		result := db.Where("uuid = ?", uuid).First(&infra3ResourceFromDatabase)
 		if result.Error == nil {
-			tfoResourceFromDatabase.CurrentState = models.ResourceState(responseJSONData[0].CurrentState)
-			db.Save(tfoResourceFromDatabase)
+			infra3ResourceFromDatabase.CurrentState = models.ResourceState(responseJSONData[0].CurrentState)
+			db.Save(infra3ResourceFromDatabase)
 		}
 	}
 
@@ -489,18 +489,18 @@ func (h APIHandler) UpdateResourceStatusViaTask(c *gin.Context) {
 	resourceUUID := claims["resourceUUID"]
 
 	// new resources must not already exist in the database
-	tfoResourceFromDatabase := models.TFOResource{}
-	result := h.DB.Where("uuid = ?", resourceUUID).First(&tfoResourceFromDatabase)
+	infra3ResourceFromDatabase := models.Infra3Resource{}
+	result := h.DB.Where("uuid = ?", resourceUUID).First(&infra3ResourceFromDatabase)
 	if result.Error != nil {
-		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("error getting tfoResource: %v", result.Error), nil))
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("error getting infra3Resource: %v", result.Error), nil))
 		return
 	}
 
-	tfoResourceFromDatabase.CurrentState = models.ResourceState(jsonData.Status)
+	infra3ResourceFromDatabase.CurrentState = models.ResourceState(jsonData.Status)
 
-	result = h.DB.Save(tfoResourceFromDatabase)
+	result = h.DB.Save(infra3ResourceFromDatabase)
 	if result.Error != nil {
-		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("error updating tfoResource: %v", result.Error), nil))
+		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("error updating infra3Resource: %v", result.Error), nil))
 		return
 	}
 
@@ -539,7 +539,7 @@ func (h APIHandler) LastTaskLog(c *gin.Context) {
 	}
 
 	// get the pods with a certain label in the default namespace
-	labelSelector := "terraforms.tf.galleybytes.com/resourceName=" + resourceName // change this to your label selector
+	labelSelector := "tfs.infra3.galleybytes.com/resourceName=" + resourceName // change this to your label selector
 	pods, err := clientset.CoreV1().Pods(namespace).List(context.Background(), metav1.ListOptions{LabelSelector: labelSelector})
 	if err != nil {
 		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
@@ -592,18 +592,18 @@ func (h APIHandler) LastTaskLog(c *gin.Context) {
 	cleanString := ansiColorRegex.ReplaceAllString(string(logs), "")
 
 	responseJSONData := []struct {
-		ClusterName string `json:"cluster_name"`
-		Namespace   string `json:"namespace"`
-		TFOResource string `json:"tfo_resource"`
-		CurrentTask string `json:"current_task"`
-		LastTaskLog string `json:"last_task_log"`
+		ClusterName    string `json:"cluster_name"`
+		Namespace      string `json:"namespace"`
+		Infra3Resource string `json:"infra3_resource"`
+		CurrentTask    string `json:"current_task"`
+		LastTaskLog    string `json:"last_task_log"`
 	}{
 		{
-			ClusterName: string(clusterName),
-			Namespace:   string(namespace),
-			TFOResource: string(resourceName),
-			CurrentTask: string(currentTask),
-			LastTaskLog: string(cleanString),
+			ClusterName:    string(clusterName),
+			Namespace:      string(namespace),
+			Infra3Resource: string(resourceName),
+			CurrentTask:    string(currentTask),
+			LastTaskLog:    string(cleanString),
 		},
 	}
 
@@ -612,16 +612,16 @@ func (h APIHandler) LastTaskLog(c *gin.Context) {
 }
 
 // Take into account pod phases as well as task state to determine if the workflow is still running.
-func IsWorkflowRunning(status tfv1beta1.TerraformStatus) bool {
+func IsWorkflowRunning(status infra3v1.TfStatus) bool {
 	switch status.Stage.State {
-	case tfv1beta1.StateFailed, tfv1beta1.StageState(corev1.PodFailed):
+	case infra3v1.StateFailed, infra3v1.StageState(corev1.PodFailed):
 		// Failed states trump all, the workflow is not running after a failure
 		return false
-	case tfv1beta1.StageState(corev1.PodRunning), tfv1beta1.StageState(corev1.PodPending):
+	case infra3v1.StageState(corev1.PodRunning), infra3v1.StageState(corev1.PodPending):
 		// When the pod is claimed to be running, the workflow is still running
 		return true
 	default:
-		if status.Phase != tfv1beta1.PhaseCompleted {
+		if status.Phase != infra3v1.PhaseCompleted {
 			return true
 		}
 		return false
@@ -631,15 +631,15 @@ func IsWorkflowRunning(status tfv1beta1.TerraformStatus) bool {
 // Sends logs generally used before opening the websocket. The socket logs will only gather logs
 // open cached event items
 func (h APIHandler) preLogs(c *gin.Context) {
-	tfoResourceUUID := c.Param("tfo_resource_uuid")
+	infra3ResourceUUID := c.Param("infra3_resource_uuid")
 	generation := c.Param("generation")
 	rerun := c.Query("rerun")
 	_ = rerun
-	c.JSON(http.StatusOK, response(http.StatusOK, "", logs(h.DB, tfoResourceUUID, generation)))
+	c.JSON(http.StatusOK, response(http.StatusOK, "", logs(h.DB, infra3ResourceUUID, generation)))
 }
 
 func (h APIHandler) websocketLogs(c *gin.Context) {
-	tfoResourceUUID := c.Param("tfo_resource_uuid")
+	infra3ResourceUUID := c.Param("infra3_resource_uuid")
 	generation := c.Param("generation")
 	rerun := c.Query("rerun")
 	_ = rerun
@@ -676,10 +676,10 @@ func (h APIHandler) websocketLogs(c *gin.Context) {
 			s.Listen()
 
 		default:
-			if _, found := h.Cache.Get(tfoResourceUUID); found {
-				h.Cache.Delete(tfoResourceUUID)
+			if _, found := h.Cache.Get(infra3ResourceUUID); found {
+				h.Cache.Delete(infra3ResourceUUID)
 
-				for _, log := range logs(h.DB, tfoResourceUUID, generation) {
+				for _, log := range logs(h.DB, infra3ResourceUUID, generation) {
 					b, err := json.Marshal(log)
 					if err != nil {
 						return
@@ -703,9 +703,9 @@ type TaskLog struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-func logs(db *gorm.DB, tfoResourceUUID string, generation string) []TaskLog {
+func logs(db *gorm.DB, infra3ResourceUUID string, generation string) []TaskLog {
 	tasks := []models.TaskPod{}
-	queryResult := allTasksGeneratedForResource(db, tfoResourceUUID, generation).Scan(&tasks)
+	queryResult := allTasksGeneratedForResource(db, infra3ResourceUUID, generation).Scan(&tasks)
 	if queryResult.Error != nil {
 		return nil
 	}
@@ -818,7 +818,7 @@ func (h APIHandler) getWorkflowInfo(c *gin.Context) {
 		return
 	}
 
-	var tfoResourcesData []struct {
+	var infra3ResourcesData []struct {
 		Name              string    `json:"name"`
 		Namespace         string    `json:"namespace"`
 		ClusterName       string    `json:"cluster_name"`
@@ -828,7 +828,7 @@ func (h APIHandler) getWorkflowInfo(c *gin.Context) {
 		UpdatedAt         time.Time `json:"updated_at"`
 		CreatedAt         time.Time `json:"created_at"`
 	}
-	var tfoResourceSpecsData []struct {
+	var infra3ResourceSpecsData []struct {
 		ResourceSpec string    `json:"resource_spec"`
 		Annotations  string    `json:"annotations"`
 		Labels       string    `json:"labels"`
@@ -872,46 +872,46 @@ func (h APIHandler) getWorkflowInfo(c *gin.Context) {
 	}
 	finalResult := [1]ResponseItem{}
 
-	queryResult := workflow(h.DB, clusterID, namespace, name).Scan(&tfoResourcesData)
+	queryResult := workflow(h.DB, clusterID, namespace, name).Scan(&infra3ResourcesData)
 	if queryResult.Error != nil {
 		c.JSON(http.StatusNotFound, response(http.StatusNotFound, "Workflow Query Error: "+queryResult.Error.Error(), []any{}))
 		return
 	}
-	if len(tfoResourcesData) == 0 {
+	if len(infra3ResourcesData) == 0 {
 		c.JSON(http.StatusOK, response(http.StatusOK, "Resource not found", []any{}))
 		return
 	}
 
-	resourceUUID := tfoResourcesData[0].UUID
+	resourceUUID := infra3ResourcesData[0].UUID
 	if generation == "latest" {
-		generation = tfoResourcesData[0].CurrentGeneration
+		generation = infra3ResourcesData[0].CurrentGeneration
 	}
 
-	finalResult[0].Name = tfoResourcesData[0].Name
-	finalResult[0].Namespace = tfoResourcesData[0].Namespace
-	finalResult[0].CurrentState = tfoResourcesData[0].CurrentState
-	finalResult[0].ClusterName = tfoResourcesData[0].ClusterName
-	finalResult[0].CurrentGeneration = tfoResourcesData[0].CurrentGeneration
+	finalResult[0].Name = infra3ResourcesData[0].Name
+	finalResult[0].Namespace = infra3ResourcesData[0].Namespace
+	finalResult[0].CurrentState = infra3ResourcesData[0].CurrentState
+	finalResult[0].ClusterName = infra3ResourcesData[0].ClusterName
+	finalResult[0].CurrentGeneration = infra3ResourcesData[0].CurrentGeneration
 	finalResult[0].QueryGeneration = generation
 	finalResult[0].UUID = resourceUUID
-	finalResult[0].CreatedAt = tfoResourcesData[0].CreatedAt
-	finalResult[0].UpdatedAt = tfoResourcesData[0].UpdatedAt
+	finalResult[0].CreatedAt = infra3ResourcesData[0].CreatedAt
+	finalResult[0].UpdatedAt = infra3ResourcesData[0].UpdatedAt
 
-	queryResult = resourceSpec(h.DB, resourceUUID, generation).Scan(&tfoResourceSpecsData)
+	queryResult = resourceSpec(h.DB, resourceUUID, generation).Scan(&infra3ResourceSpecsData)
 	if queryResult.Error != nil {
 		c.JSON(http.StatusNotFound, response(http.StatusNotFound, "ResourceSpec Query Error: "+queryResult.Error.Error(), []any{}))
 		return
 	}
-	if len(tfoResourceSpecsData) == 0 {
+	if len(infra3ResourceSpecsData) == 0 {
 		c.JSON(http.StatusOK, response(http.StatusOK, "resource spec not found", finalResult))
 		return
 	}
 
-	finalResult[0].ResourceSpec = tfoResourceSpecsData[0].ResourceSpec
-	finalResult[0].Annotations = tfoResourceSpecsData[0].Annotations
-	finalResult[0].Labels = tfoResourceSpecsData[0].Labels
-	finalResult[0].ResourceSpecCreatedAt = tfoResourceSpecsData[0].CreatedAt
-	finalResult[0].ResourceSpecUpdatedAt = tfoResourceSpecsData[0].UpdatedAt
+	finalResult[0].ResourceSpec = infra3ResourceSpecsData[0].ResourceSpec
+	finalResult[0].Annotations = infra3ResourceSpecsData[0].Annotations
+	finalResult[0].Labels = infra3ResourceSpecsData[0].Labels
+	finalResult[0].ResourceSpecCreatedAt = infra3ResourceSpecsData[0].CreatedAt
+	finalResult[0].ResourceSpecUpdatedAt = infra3ResourceSpecsData[0].UpdatedAt
 
 	queryResult = allTasksGeneratedForResource(h.DB, resourceUUID, generation).Scan(&tasks)
 	if queryResult.Error != nil {
@@ -965,7 +965,7 @@ func (h APIHandler) getWorkflowInfo(c *gin.Context) {
 }
 
 func (h APIHandler) getAllTasksGeneratedForResource(c *gin.Context) {
-	resourceUUID := c.Param("tfo_resource_uuid")
+	resourceUUID := c.Param("infra3_resource_uuid")
 	generation := c.Param("generation")
 
 	var result []struct {
@@ -994,7 +994,7 @@ func Reverse[T any](input []T) []T {
 
 // Runs the same query as getAllTasksGeneratedForResource but filters tasks based on rerun
 func (h APIHandler) getHighestRerunOfTasksGeneratedForResource(c *gin.Context) {
-	resourceUUID := c.Param("tfo_resource_uuid")
+	resourceUUID := c.Param("infra3_resource_uuid")
 	generation := c.Param("generation")
 
 	type data struct {
@@ -1036,7 +1036,7 @@ func (h APIHandler) getHighestRerunOfTasksGeneratedForResource(c *gin.Context) {
 }
 
 func (h APIHandler) setApprovalForResource(c *gin.Context) {
-	resourceUUID := c.Param("tfo_resource_uuid")
+	resourceUUID := c.Param("infra3_resource_uuid")
 	generation := c.Param("generation")
 
 	jsonData := struct {
@@ -1072,7 +1072,7 @@ func (h APIHandler) setApprovalForResource(c *gin.Context) {
 }
 
 func (h APIHandler) getApprovalStatusForResource(c *gin.Context) {
-	resourceUUID := c.Param("tfo_resource_uuid")
+	resourceUUID := c.Param("infra3_resource_uuid")
 	generation := c.Param("generation")
 
 	var data []struct {
@@ -1095,7 +1095,7 @@ func (h APIHandler) getApprovalStatusForResource(c *gin.Context) {
 }
 
 func (h APIHandler) getWorkflowResourceConfiguration(c *gin.Context) {
-	resurceUUID := c.Param("tfo_resource_uuid")
+	resurceUUID := c.Param("infra3_resource_uuid")
 	generation := c.Param("generation")
 
 	var result []struct {
@@ -1140,11 +1140,11 @@ func (h APIHandler) ResourcePoll(c *gin.Context) {
 		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
 		return
 	}
-	tfoclientset := tfo.NewForConfigOrDie(config)
+	infra3Clientset := infra3clientset.NewForConfigOrDie(config)
 	clientset := kubernetes.NewForConfigOrDie(config)
 
 	// Before checking for resources to return, check that the current generation has completed
-	tf, err := tfoclientset.TfV1beta1().Terraforms(namespace).Get(c, name, metav1.GetOptions{})
+	tf, err := infra3Clientset.Infra3V1().Tves(namespace).Get(c, name, metav1.GetOptions{})
 	if err != nil {
 		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
 		return
@@ -1161,8 +1161,8 @@ func (h APIHandler) ResourcePoll(c *gin.Context) {
 		Kind:    "List",
 	})
 
-	annotationKey := "tfo-api.galleybytes.com/sync-upon-completion-of"
-	labelSelector := "tfo-api.galleybytes.com/sync"
+	annotationKey := "infra3-stella.galleybytes.com/sync-upon-completion-of"
+	labelSelector := "infra3-stella.galleybytes.com/sync"
 	secrets, err := clientset.CoreV1().Secrets(namespace).List(c, metav1.ListOptions{
 		LabelSelector: labelSelector, // Find resources when the key exists
 	})
@@ -1299,7 +1299,7 @@ func (h APIHandler) syncDependencies(c *gin.Context) error {
 func getVclusterConfig(clientset kubernetes.Interface, tenantId, clusterName string) (*rest.Config, error) {
 	// With the clusterName, check out the vcluster config
 	namespace := tenantId + "-" + clusterName
-	secret, err := clientset.CoreV1().Secrets(namespace).Get(context.TODO(), "vc-tfo-virtual-cluster", metav1.GetOptions{})
+	secret, err := clientset.CoreV1().Secrets(namespace).Get(context.TODO(), "vc-infra3-virtual-cluster", metav1.GetOptions{})
 	if err != nil {
 		return nil, err
 	}
@@ -1322,7 +1322,7 @@ func getVclusterConfig(clientset kubernetes.Interface, tenantId, clusterName str
 	// To do so we set the config to insecure and we remove the CAData. We have to leave
 	// CertData and CertFile which are used as authorization to the vcluster.
 	config := kedge.KubernetesConfig(kubeConfigFilename.Name())
-	config.Host = fmt.Sprintf("tfo-virtual-cluster.%s.svc", namespace)
+	config.Host = fmt.Sprintf("infra3-virtual-cluster.%s.svc", namespace)
 	if VCLUSTER_DEBUG_HOST != "" {
 		config.Host = VCLUSTER_DEBUG_HOST
 	}
@@ -1380,13 +1380,13 @@ func (h APIHandler) addResource(c *gin.Context) (string, error) {
 		return "", errors.New("Unable to parse JSON from request data: " + err.Error())
 	}
 
-	// if tfoResource.UUID == "" {}
+	// if infra3Resource.UUID == "" {}
 	err = jsonData.validate()
 	if err != nil {
 		return "", err
 	}
 
-	tfoResource, tfoResourceSpec, err := jsonData.Parse(clusterID)
+	infra3Resource, infra3ResourceSpec, err := jsonData.Parse(clusterID)
 	if err != nil {
 		return "", err
 	}
@@ -1404,39 +1404,39 @@ func (h APIHandler) addResource(c *gin.Context) (string, error) {
 
 	// new resources must not already exist in the database
 	// var x models.TFOResource
-	result = h.DB.First(&tfoResource)
+	result = h.DB.First(&infra3Resource)
 	if result.Error == nil {
 		// the UUID exists in the database. The result will return a success with the message the resource
 		// already exists. To update the resource_spec, the client must make a PUT request instead.
-		return fmt.Sprintf("tf resource '%s/%s' already exists", tfoResource.Namespace, tfoResource.Name), nil
+		return fmt.Sprintf("tf resource '%s/%s' already exists", infra3Resource.Namespace, infra3Resource.Name), nil
 	} else if result.Error != nil && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		return "", fmt.Errorf("error occurred when looking for tfo_resource: %v", result.Error)
+		return "", fmt.Errorf("error occurred when looking for infra3_resource: %v", result.Error)
 	}
 
-	result = h.DB.Create(&tfoResource)
+	result = h.DB.Create(&infra3Resource)
 	if result.Error != nil {
-		return "", fmt.Errorf("error saving tfo_resource: %s", result.Error)
+		return "", fmt.Errorf("error saving infra3_resource: %s", result.Error)
 	}
 
-	err = deleteTFOResourcesExceptNewest(h.DB, tfoResource)
+	err = deleteInfra3ResourcesExceptNewest(h.DB, infra3Resource)
 	if err != nil {
 		return "", err
 	}
 
-	result = h.DB.Create(&tfoResourceSpec)
+	result = h.DB.Create(&infra3ResourceSpec)
 	if result.Error != nil {
-		return "", fmt.Errorf("error saving tfo_resource_spec: %s", result.Error)
+		return "", fmt.Errorf("error saving infra3_resource_spec: %s", result.Error)
 	}
 
 	apiURL := GetApiURL(c, h.serviceIP)
-	_, err = NewTaskToken(h.DB, *tfoResourceSpec, h.tenant, clusterName, apiURL, h.clientset)
+	_, err = NewTaskToken(h.DB, *infra3ResourceSpec, h.tenant, clusterName, apiURL, h.clientset)
 	if err != nil {
 		return "", err
 	}
-	appendClusterNameLabel(&jsonData.Terraform, cluster.Name)
-	addGlobalTaskOptions(&jsonData.Terraform, h.tenant, clusterName, apiURL)
+	appendClusterNameLabel(&jsonData.Tf, cluster.Name)
+	addGlobalTaskOptions(&jsonData.Tf, h.tenant, clusterName, apiURL)
 
-	err = applyOnCreateOrUpdate(c, jsonData.Terraform, h.clientset, h.tenant, h.fswatchImage)
+	err = applyOnCreateOrUpdate(c, jsonData.Tf, h.clientset, h.tenant, h.fswatchImage)
 	if err != nil {
 		return "", err
 	}
@@ -1459,13 +1459,13 @@ func (h APIHandler) updateResource(c *gin.Context) error {
 		return errors.New("Unable to parse JSON from request data: " + err.Error())
 	}
 
-	// if tfoResource.UUID == "" {}
+	// if infra3Resource.UUID == "" {}
 	err = jsonData.validate()
 	if err != nil {
 		return err
 	}
 
-	tfoResource, tfoResourceSpec, err := jsonData.Parse(clusterID)
+	infra3Resource, infra3ResourceSpec, err := jsonData.Parse(clusterID)
 	if err != nil {
 		return err
 	}
@@ -1482,57 +1482,57 @@ func (h APIHandler) updateResource(c *gin.Context) error {
 	}
 
 	// looking for the resource in the database to update
-	tfoResourceFromDatabase := models.TFOResource{}
-	result = h.DB.Where("uuid = ?", tfoResource.UUID).First(&tfoResourceFromDatabase)
+	infra3ResourceFromDatabase := models.Infra3Resource{}
+	result = h.DB.Where("uuid = ?", infra3Resource.UUID).First(&infra3ResourceFromDatabase)
 	if result.Error != nil {
 		// result must exist to update
-		return fmt.Errorf("error getting tfoResource: %v", result.Error)
+		return fmt.Errorf("error getting infra3Resource: %v", result.Error)
 	}
 
 	// Generation lookups are done from the origin resource and not the generation in the vcluster.
-	gen1 := tfoResource.CurrentGeneration
-	gen2 := tfoResourceFromDatabase.CurrentGeneration
+	gen1 := infra3Resource.CurrentGeneration
+	gen2 := infra3ResourceFromDatabase.CurrentGeneration
 	if compare(gen1, "<", gen2) {
 		return fmt.Errorf("error updating resource, generation '%s' is less than current generation '%s'", gen1, gen2)
 	}
 
 	if compare(gen1, ">", gen2) {
 		// Reset the state of the resource because this is a new generation of the resource spec
-		tfoResourceFromDatabase.CurrentState = models.Untracked
-		tfoResourceFromDatabase.CurrentGeneration = tfoResource.CurrentGeneration
+		infra3ResourceFromDatabase.CurrentState = models.Untracked
+		infra3ResourceFromDatabase.CurrentGeneration = infra3Resource.CurrentGeneration
 	}
 
-	result = h.DB.Save(&tfoResourceFromDatabase) // Updates database state with any generation changes
+	result = h.DB.Save(&infra3ResourceFromDatabase) // Updates database state with any generation changes
 	if result.Error != nil {
 		return result.Error
 	}
 
-	err = deleteTFOResourcesExceptNewest(h.DB, &tfoResourceFromDatabase)
+	err = deleteInfra3ResourcesExceptNewest(h.DB, &infra3ResourceFromDatabase)
 	if err != nil {
 		return err
 	}
 
-	tfoResourceSpecFromDatabase := models.TFOResourceSpec{}
-	result = h.DB.Where("tfo_resource_uuid = ? AND generation = ?", tfoResourceFromDatabase.UUID, tfoResourceFromDatabase.CurrentGeneration).First(&tfoResourceSpecFromDatabase)
+	infra3ResourceSpecFromDatabase := models.Infra3ResourceSpec{}
+	result = h.DB.Where("infra3_resource_uuid = ? AND generation = ?", infra3ResourceFromDatabase.UUID, infra3ResourceFromDatabase.CurrentGeneration).First(&infra3ResourceSpecFromDatabase)
 	if result.Error != nil && errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		result = h.DB.Create(&tfoResourceSpec)
+		result = h.DB.Create(&infra3ResourceSpec)
 		if result.Error != nil {
 			return result.Error
 		}
-		tfoResourceSpecFromDatabase = *tfoResourceSpec
+		infra3ResourceSpecFromDatabase = *infra3ResourceSpec
 	} else if result.Error != nil {
-		return fmt.Errorf("error occurred when looking for tfo_resource_spec: %v", result.Error)
+		return fmt.Errorf("error occurred when looking for infra3_resource_spec: %v", result.Error)
 	}
 
 	apiURL := GetApiURL(c, h.serviceIP)
-	_, err = NewTaskToken(h.DB, tfoResourceSpecFromDatabase, h.tenant, clusterName, apiURL, h.clientset)
+	_, err = NewTaskToken(h.DB, infra3ResourceSpecFromDatabase, h.tenant, clusterName, apiURL, h.clientset)
 	if err != nil {
 		return err
 	}
-	appendClusterNameLabel(&jsonData.Terraform, clusterName)
-	addGlobalTaskOptions(&jsonData.Terraform, h.tenant, clusterName, apiURL)
+	appendClusterNameLabel(&jsonData.Tf, clusterName)
+	addGlobalTaskOptions(&jsonData.Tf, h.tenant, clusterName, apiURL)
 
-	err = applyOnCreateOrUpdate(c, jsonData.Terraform, h.clientset, h.tenant, h.fswatchImage)
+	err = applyOnCreateOrUpdate(c, jsonData.Tf, h.clientset, h.tenant, h.fswatchImage)
 	if err != nil {
 		return err
 	}
@@ -1547,35 +1547,35 @@ func (h APIHandler) manualTokenPatch(c *gin.Context) {
 	namespace := c.Param("namespace")
 	clusterName := c.Param("cluster_name")
 
-	var tfoResourceSpec models.TFOResourceSpec
+	var infra3ResourceSpec models.Infra3ResourceSpec
 
 	result := h.DB.Raw(`
 		SELECT
-			tfo_resource_specs.*
+			infra3_resource_specs.*
 		FROM
-			tfo_resource_specs
+			infra3_resource_specs
 			JOIN
-				tfo_resources
-				ON tfo_resources.uuid = tfo_resource_specs.tfo_resource_uuid
+				infra3_resources
+				ON infra3_resources.uuid = infra3_resource_specs.infra3_resource_uuid
 			JOIN
 				clusters
-				ON clusters.id = tfo_resources.cluster_id
+				ON clusters.id = infra3_resources.cluster_id
 		WHERE clusters.name = ?
-			AND tfo_resources.namespace = ?
-			AND tfo_resources.name = ?
-			AND tfo_resource_specs.generation = tfo_resources.current_generation
-	`, clusterName, namespace, name).Scan(&tfoResourceSpec)
+			AND infra3_resources.namespace = ?
+			AND infra3_resources.name = ?
+			AND infra3_resource_specs.generation = infra3_resources.current_generation
+	`, clusterName, namespace, name).Scan(&infra3ResourceSpec)
 	if result.Error != nil {
 		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, fmt.Sprintf("error getting TFOResourceSpec: %v", result.Error), nil))
 		return
 	}
-	if tfoResourceSpec.ID == 0 {
+	if infra3ResourceSpec.ID == 0 {
 		c.JSON(http.StatusNotFound, response(http.StatusNotFound, "TFOResourceSpec not found", nil))
 		return
 	}
 
 	apiURL := GetApiURL(c, h.serviceIP)
-	_, err := NewTaskToken(h.DB, tfoResourceSpec, h.tenant, clusterName, apiURL, h.clientset)
+	_, err := NewTaskToken(h.DB, infra3ResourceSpec, h.tenant, clusterName, apiURL, h.clientset)
 	if err != nil {
 
 		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
@@ -1585,26 +1585,26 @@ func (h APIHandler) manualTokenPatch(c *gin.Context) {
 	c.JSON(http.StatusNoContent, response(http.StatusNoContent, "", nil))
 }
 
-// Soft deletes tfo_resources from the database except the latest one via created_at timestamp
-func deleteTFOResourcesExceptNewest(db *gorm.DB, tfoResource *models.TFOResource) error {
-	// A tfo resource has a namespace and a name, which are used to identify it uniquely within the cluster.
-	// Upon the successful creation of a new tfoResource, any previous tfoResources matching the
+// Soft deletes infra3_resources from the database except the latest one via created_at timestamp
+func deleteInfra3ResourcesExceptNewest(db *gorm.DB, infra3Resource *models.Infra3Resource) error {
+	// A infra3 resource has a namespace and a name, which are used to identify it uniquely within the cluster.
+	// Upon the successful creation of a new infra3Resource, any previous infra3Resources matching the
 	// clusterID/namespace/name must be "deleted" by adding a "deleted_at" timestamp.
-	var tfoResources []models.TFOResource
-	result := db.Where("name = ? AND namespace = ? AND cluster_id = ?", tfoResource.Name, tfoResource.Namespace, tfoResource.ClusterID).Order("created_at desc").Offset(1).Find(&tfoResources)
+	var infra3Resources []models.Infra3Resource
+	result := db.Where("name = ? AND namespace = ? AND cluster_id = ?", infra3Resource.Name, infra3Resource.Namespace, infra3Resource.ClusterID).Order("created_at desc").Offset(1).Find(&infra3Resources)
 	if result.Error == nil {
-		for i, _ := range tfoResources {
-			tfoResources[i].DeletedBy = tfoResource.UUID
+		for i, _ := range infra3Resources {
+			infra3Resources[i].DeletedBy = infra3Resource.UUID
 		}
-		if len(tfoResources) > 0 {
-			result = db.Save(&tfoResources)
+		if len(infra3Resources) > 0 {
+			result = db.Save(&infra3Resources)
 			if result.Error != nil {
-				return fmt.Errorf("error writing to tfo_resources: %s", result.Error)
+				return fmt.Errorf("error writing to infra3_resources: %s", result.Error)
 			}
 
-			result = db.Delete(&tfoResources)
+			result = db.Delete(&infra3Resources)
 			if result.Error != nil {
-				return fmt.Errorf("error (soft) deleting tfo_resources: %s", result.Error)
+				return fmt.Errorf("error (soft) deleting infra3_resources: %s", result.Error)
 			}
 		}
 
@@ -1616,15 +1616,15 @@ func deleteTFOResourcesExceptNewest(db *gorm.DB, tfoResource *models.TFOResource
 // tasks namespace inside the vcluster. The secrets is to be used with envFrom inside the task pods.
 //
 // The generated name is the resourceName + "-jwt".
-func NewTaskToken(db *gorm.DB, tfoResourceSpec models.TFOResourceSpec, _tenantID, clusterName, apiURL string, clientset kubernetes.Interface) (*string, error) {
+func NewTaskToken(db *gorm.DB, infra3ResourceSpec models.Infra3ResourceSpec, _tenantID, clusterName, apiURL string, clientset kubernetes.Interface) (*string, error) {
 	// tenantID is totally broken right now. Just hardcode this for now
 	tenantID := "internal"
 	var token string
-	var tfoResource models.TFOResource
+	var infra3Resource models.Infra3Resource
 	var version int
-	tfoResourceSpecID := tfoResourceSpec.ID
-	generation := tfoResourceSpec.Generation
-	resourceUUID := tfoResourceSpec.TFOResourceUUID
+	infra3ResourceSpecID := infra3ResourceSpec.ID
+	generation := infra3ResourceSpec.Generation
+	resourceUUID := infra3ResourceSpec.Infra3ResourceUUID
 
 	token, refreshToken, err := generateTaskJWT(resourceUUID, tenantID, clusterName, generation)
 	if err != nil {
@@ -1635,12 +1635,12 @@ func NewTaskToken(db *gorm.DB, tfoResourceSpec models.TFOResourceSpec, _tenantID
 
 	} else {
 
-		result := db.Raw("SELECT * FROM tfo_resources WHERE uuid = ?", tfoResourceSpec.TFOResourceUUID).Scan(&tfoResource)
+		result := db.Raw("SELECT * FROM infra3_resources WHERE uuid = ?", infra3ResourceSpec.Infra3ResourceUUID).Scan(&infra3Resource)
 		if result.Error != nil {
 			return nil, fmt.Errorf("failed to find TFO Resource: %s", result.Error)
 		}
 
-		_ = db.Table("refresh_tokens").Select("max(version)").Where("tfo_resource_spec_id = ?", tfoResourceSpecID).Scan(&version)
+		_ = db.Table("refresh_tokens").Select("max(version)").Where("infra3_resource_spec_id = ?", infra3ResourceSpecID).Scan(&version)
 		if result.Error != nil {
 			if !errors.Is(result.Error, gorm.ErrModelValueRequired) && !errors.Is(result.Error, gorm.ErrRecordNotFound) {
 				return nil, fmt.Errorf("failed to get previous token version: %s", result.Error)
@@ -1659,28 +1659,28 @@ func NewTaskToken(db *gorm.DB, tfoResourceSpec models.TFOResourceSpec, _tenantID
 
 		config, err := getVclusterConfig(clientset, tenantID, clusterName)
 		if err != nil {
-			return nil, fmt.Errorf("error occurred getting vcluster config for %s-%s %s/%s: %s", tenantID, clusterName, tfoResource.Namespace, tfoResource.Name, err)
+			return nil, fmt.Errorf("error occurred getting vcluster config for %s-%s %s/%s: %s", tenantID, clusterName, infra3Resource.Namespace, infra3Resource.Name, err)
 		}
 		vclusterClient := kubernetes.NewForConfigOrDie(config)
 
 		// Try and create the namespace for the tfResource. Acceptable error is if namespace already exists.
 		_, err = vclusterClient.CoreV1().Namespaces().Create(context.TODO(), &corev1.Namespace{
 			ObjectMeta: metav1.ObjectMeta{
-				Name: tfoResource.Namespace,
+				Name: infra3Resource.Namespace,
 			},
 		}, metav1.CreateOptions{})
 		if err != nil {
 			if !kerrors.IsAlreadyExists(err) {
-				return nil, fmt.Errorf("namespace/%s could not be created in vcluster: %s", tfoResource.Namespace, err)
+				return nil, fmt.Errorf("namespace/%s could not be created in vcluster: %s", infra3Resource.Namespace, err)
 			}
 		}
 
 		// generate a secret manifest for the jwt token
-		secretName := util.Trunc(tfoResource.Name, 249) + "-jwt"
+		secretName := util.Trunc(infra3Resource.Name, 249) + "-jwt"
 		secretConfig := corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      secretName,
-				Namespace: tfoResource.Namespace,
+				Namespace: infra3Resource.Namespace,
 
 				// The OwnerReference is not working as expected and the secret is getting removed
 				// immediately after it's creation. Find out the right way to add ownership
@@ -1692,8 +1692,8 @@ func NewTaskToken(db *gorm.DB, tfoResourceSpec models.TFOResourceSpec, _tenantID
 					{
 						APIVersion:         string("tf.galleybytes.com/v1beta1"),
 						Kind:               string("Terraform"),
-						Name:               tfoResource.Name,
-						UID:                types.UID(tfoResource.UUID),
+						Name:               infra3Resource.Name,
+						UID:                types.UID(infra3Resource.UUID),
 						Controller:         newTrue(),
 						BlockOwnerDeletion: newTrue(),
 					},
@@ -1709,8 +1709,8 @@ func NewTaskToken(db *gorm.DB, tfoResourceSpec models.TFOResourceSpec, _tenantID
 			Type: corev1.SecretTypeOpaque,
 		}
 
-		_, err = vclusterClient.CoreV1().Secrets(tfoResource.Namespace).Create(context.TODO(), &secretConfig, metav1.CreateOptions{
-			FieldManager: "tfoapi",
+		_, err = vclusterClient.CoreV1().Secrets(infra3Resource.Namespace).Create(context.TODO(), &secretConfig, metav1.CreateOptions{
+			FieldManager: "infra3api",
 		})
 		if err != nil {
 			if !kerrors.IsAlreadyExists(err) {
@@ -1720,23 +1720,23 @@ func NewTaskToken(db *gorm.DB, tfoResourceSpec models.TFOResourceSpec, _tenantID
 			{"op": "replace", "path": "/data/TFO_API_LOG_TOKEN", "value": "%s"},
 			{"op": "replace", "path": "/data/REFRESH_TOKEN", "value": "%s"}
 		]`, util.B64Encode(token), util.B64Encode(refreshToken)))
-			_, err := vclusterClient.CoreV1().Secrets(tfoResource.Namespace).Patch(context.TODO(), secretName, types.JSONPatchType, patch, metav1.PatchOptions{})
+			_, err := vclusterClient.CoreV1().Secrets(infra3Resource.Namespace).Patch(context.TODO(), secretName, types.JSONPatchType, patch, metav1.PatchOptions{})
 			if err != nil {
 				return nil, fmt.Errorf("failed to patch secret: %s", err)
 			}
 		}
-		log.Printf("Patched %s/%s in %s-%s", tfoResource.Namespace, secretName, tenantID, clusterName)
+		log.Printf("Patched %s/%s in %s-%s", infra3Resource.Namespace, secretName, tenantID, clusterName)
 
 		refreshToken := models.RefreshToken{
-			RefreshToken:      hash,
-			Version:           version + 1,
-			UsedAt:            nil,
-			CanceledAt:        nil,
-			ReUsedAt:          nil,
-			TFOResourceSpecID: tfoResourceSpec.ID,
+			RefreshToken:         hash,
+			Version:              version + 1,
+			UsedAt:               nil,
+			CanceledAt:           nil,
+			ReUsedAt:             nil,
+			Infra3ResourceSpecID: infra3ResourceSpec.ID,
 		}
 
-		result = db.Exec("UPDATE refresh_tokens SET canceled_at = ?, canceled_reason = 'NEW_TOKEN_GENERATION' WHERE tfo_resource_spec_id = ?", time.Now(), tfoResourceSpecID)
+		result = db.Exec("UPDATE refresh_tokens SET canceled_at = ?, canceled_reason = 'NEW_TOKEN_GENERATION' WHERE infra3_resource_spec_id = ?", time.Now(), infra3ResourceSpecID)
 		if result.Error != nil {
 			return nil, fmt.Errorf("failed to invalidate previous tokens: %s", result.Error)
 		}
@@ -1755,13 +1755,13 @@ func newTrue() *bool { b := true; return &b }
 func NewTaskTokenFromRefreshToken(db *gorm.DB, refreshToken, apiURL string, clientset kubernetes.Interface) (string, error) {
 	var data struct {
 		models.RefreshToken
-		models.TFOResourceSpec
-		models.TFOResource
+		models.Infra3ResourceSpec
+		models.Infra3Resource
 		models.Cluster
 	}
 
 	var signature string
-	var tfoOriginUUID string
+	var infra3OriginUUID string
 
 	parsedToken, err := doValidation(refreshToken)
 	if err != nil {
@@ -1772,31 +1772,31 @@ func NewTaskTokenFromRefreshToken(db *gorm.DB, refreshToken, apiURL string, clie
 
 	jwt.Parse(refreshToken, func(t *jwt.Token) (interface{}, error) {
 		claims := t.Claims.(jwt.MapClaims)
-		tfoOriginUUID = claims["username"].(string)
+		infra3OriginUUID = claims["username"].(string)
 		return nil, nil
 	})
 
-	if tfoOriginUUID == "" {
+	if infra3OriginUUID == "" {
 		return "", fmt.Errorf("invalid token claims")
 	}
 
 	query := fmt.Sprintf(`
 		SELECT * FROM refresh_tokens
-		JOIN tfo_resource_specs
-			ON tfo_resource_specs.id = refresh_tokens.tfo_resource_spec_id
-		JOIN tfo_resources
-			ON tfo_resources.uuid = tfo_resource_specs.tfo_resource_uuid
+		JOIN infra3_resource_specs
+			ON infra3_resource_specs.id = refresh_tokens.infra3_resource_spec_id
+		JOIN infra3_resources
+			ON infra3_resources.uuid = infra3_resource_specs.infra3_resource_uuid
 		JOIN clusters
-			ON clusters.id = tfo_resources.cluster_id
-		WHERE tfo_resource_specs.tfo_resource_uuid = '%s'
+			ON clusters.id = infra3_resources.cluster_id
+		WHERE infra3_resource_specs.infra3_resource_uuid = '%s'
 		AND refresh_tokens.canceled_at IS NULL
 		AND refresh_tokens.version = (
 			SELECT MAX(version) FROM refresh_tokens
-			JOIN tfo_resource_specs
-				ON tfo_resource_specs.id = refresh_tokens.tfo_resource_spec_id
-			WHERE tfo_resource_specs.tfo_resource_uuid = '%s'
+			JOIN infra3_resource_specs
+				ON infra3_resource_specs.id = refresh_tokens.infra3_resource_spec_id
+			WHERE infra3_resource_specs.infra3_resource_uuid = '%s'
 		)
-	`, tfoOriginUUID, tfoOriginUUID)
+	`, infra3OriginUUID, infra3OriginUUID)
 
 	result := db.Raw(query).Scan(&data)
 	if result.Error != nil {
@@ -1807,7 +1807,7 @@ func NewTaskTokenFromRefreshToken(db *gorm.DB, refreshToken, apiURL string, clie
 		return "", fmt.Errorf("invalid refresh token")
 	}
 
-	token, err := NewTaskToken(db, data.TFOResourceSpec, "", data.Cluster.Name, apiURL, clientset)
+	token, err := NewTaskToken(db, data.Infra3ResourceSpec, "", data.Cluster.Name, apiURL, clientset)
 	if err != nil {
 		return "", err
 	}
@@ -1848,23 +1848,23 @@ func GetApiURL(c *gin.Context, serviceIP *string) string {
 
 // appendClusterNameLabel will hack the cluster name to the resource's labels.
 // This make it easier to identify the origin of the resource in a remote cluster.
-func appendClusterNameLabel(tf *tfv1beta1.Terraform, clusterName string) {
+func appendClusterNameLabel(tf *infra3v1.Tf, clusterName string) {
 	if clusterName == "" {
 		return
 	}
 	if tf.Labels == nil {
 		tf.Labels = map[string]string{}
 	}
-	tf.Labels["tfo-api.galleybytes.com/cluster-name"] = clusterName
+	tf.Labels["infra3-stella.galleybytes.com/cluster-name"] = clusterName
 }
 
 // addGlobalTaskOptions will inject TFO_ORIGIN envs to the incoming resource
-func addGlobalTaskOptions(tf *tfv1beta1.Terraform, tenant, clusterName, apiURL string) {
+func addGlobalTaskOptions(tf *infra3v1.Tf, tenant, clusterName, apiURL string) {
 	secretName := util.Trunc(tf.Name, 249) + "-jwt"
 	generation := fmt.Sprintf("%d", tf.Generation)
 	resourceUUID := string(tf.UID)
-	tf.Spec.TaskOptions = append(tf.Spec.TaskOptions, tfv1beta1.TaskOption{
-		For: []tfv1beta1.TaskName{"*"},
+	tf.Spec.TaskOptions = append(tf.Spec.TaskOptions, infra3v1.TaskOption{
+		For: []infra3v1.TaskName{"*"},
 		Volumes: []corev1.Volume{
 			{
 				Name: "jwt",
@@ -1960,11 +1960,11 @@ func jsonify(o interface{}) (string, error) {
 	return string(b), nil
 }
 
-func applyOnCreateOrUpdate(ctx context.Context, tf tfv1beta1.Terraform, clientset kubernetes.Interface, _tenantID, fswatchImage string) error {
+func applyOnCreateOrUpdate(ctx context.Context, tf infra3v1.Tf, clientset kubernetes.Interface, _tenantID, fswatchImage string) error {
 	// tenantID is totally broken right now. Just hardcode this for now
 	tenantID := "internal"
 
-	labelKey := "tfo-api.galleybytes.com/cluster-name"
+	labelKey := "infra3-stella.galleybytes.com/cluster-name"
 	clusterName := tf.Labels[labelKey]
 	if clusterName == "" {
 		// The terraform resource requires a cluster name in order to continue
@@ -1978,7 +1978,7 @@ func applyOnCreateOrUpdate(ctx context.Context, tf tfv1beta1.Terraform, clientse
 		return fmt.Errorf("error occurred getting vcluster config for %s-%s %s/%s: %s", tenantID, clusterName, tf.Namespace, tf.Name, err)
 	}
 	vclusterClient := kubernetes.NewForConfigOrDie(config)
-	vclusterTFOClient := tfo.NewForConfigOrDie(config)
+	vclusterInfra3Client := infra3clientset.NewForConfigOrDie(config)
 
 	// Try and create the namespace for the tfResource. Acceptable error is if namespace already exists.
 	_, err = vclusterClient.CoreV1().Namespaces().Create(ctx, &corev1.Namespace{
@@ -2001,61 +2001,61 @@ func applyOnCreateOrUpdate(ctx context.Context, tf tfv1beta1.Terraform, clientse
 	tf.SetCreationTimestamp(metav1.Time{})
 
 	// Get a list of resources in the vcluster to see if the resource already exists to determines whether to patch or create.
-	terraforms, err := vclusterTFOClient.TfV1beta1().Terraforms(tf.Namespace).List(ctx, metav1.ListOptions{})
+	tfs, err := vclusterInfra3Client.Infra3V1().Tves(tf.Namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return fmt.Errorf("error occurred listing tf objects in vcluster: %s", err)
 	}
 	isPatch := false // True when terraform resource exists
-	for _, terraform := range terraforms.Items {
-		if terraform.Name == tf.Name {
-			tf.SetManagedFields(terraform.GetManagedFields())
-			tf.SetOwnerReferences(terraform.GetOwnerReferences())
-			tf.SetDeletionGracePeriodSeconds(terraform.GetDeletionGracePeriodSeconds())
-			tf.SetDeletionTimestamp(terraform.GetDeletionTimestamp())
-			tf.SetFinalizers(terraform.GetFinalizers())
-			tf.SetGenerateName(terraform.GetGenerateName())
-			tf.SetResourceVersion(terraform.GetResourceVersion())
-			tf.SetUID(terraform.GetUID())
-			tf.SetSelfLink(terraform.GetSelfLink())
-			tf.SetGeneration(terraform.GetGeneration())
-			tf.SetManagedFields(terraform.GetManagedFields())
-			tf.SetCreationTimestamp(terraform.GetCreationTimestamp())
-			tf.Status = terraform.Status
+	for _, item := range tfs.Items {
+		if item.Name == tf.Name {
+			tf.SetManagedFields(item.GetManagedFields())
+			tf.SetOwnerReferences(item.GetOwnerReferences())
+			tf.SetDeletionGracePeriodSeconds(item.GetDeletionGracePeriodSeconds())
+			tf.SetDeletionTimestamp(item.GetDeletionTimestamp())
+			tf.SetFinalizers(item.GetFinalizers())
+			tf.SetGenerateName(item.GetGenerateName())
+			tf.SetResourceVersion(item.GetResourceVersion())
+			tf.SetUID(item.GetUID())
+			tf.SetSelfLink(item.GetSelfLink())
+			tf.SetGeneration(item.GetGeneration())
+			tf.SetManagedFields(item.GetManagedFields())
+			tf.SetCreationTimestamp(item.GetCreationTimestamp())
+			tf.Status = item.Status
 			isPatch = true
 			break
 		}
 	}
 
-	fswatchImageConfig := tfv1beta1.ImageConfig{
+	fswatchImageConfig := infra3v1.ImageConfig{
 		Image:           fswatchImage,
 		ImagePullPolicy: corev1.PullIfNotPresent,
 	}
-	for _, taskName := range []tfv1beta1.TaskName{
-		tfv1beta1.RunSetup,
-		tfv1beta1.RunPreInit,
-		tfv1beta1.RunInit,
-		tfv1beta1.RunPostInit,
-		tfv1beta1.RunPrePlan,
-		tfv1beta1.RunPlan,
-		tfv1beta1.RunPostPlan,
-		tfv1beta1.RunPreApply,
-		tfv1beta1.RunApply,
-		tfv1beta1.RunPostApply,
-		tfv1beta1.RunSetupDelete,
-		tfv1beta1.RunPreInitDelete,
-		tfv1beta1.RunInitDelete,
-		tfv1beta1.RunPostInitDelete,
-		tfv1beta1.RunPrePlanDelete,
-		tfv1beta1.RunPlanDelete,
-		tfv1beta1.RunPostPlanDelete,
-		tfv1beta1.RunPreApplyDelete,
-		tfv1beta1.RunApplyDelete,
-		tfv1beta1.RunPostApplyDelete} {
+	for _, taskName := range []infra3v1.TaskName{
+		infra3v1.RunSetup,
+		infra3v1.RunPreInit,
+		infra3v1.RunInit,
+		infra3v1.RunPostInit,
+		infra3v1.RunPrePlan,
+		infra3v1.RunPlan,
+		infra3v1.RunPostPlan,
+		infra3v1.RunPreApply,
+		infra3v1.RunApply,
+		infra3v1.RunPostApply,
+		infra3v1.RunSetupDelete,
+		infra3v1.RunPreInitDelete,
+		infra3v1.RunInitDelete,
+		infra3v1.RunPostInitDelete,
+		infra3v1.RunPrePlanDelete,
+		infra3v1.RunPlanDelete,
+		infra3v1.RunPostPlanDelete,
+		infra3v1.RunPreApplyDelete,
+		infra3v1.RunApplyDelete,
+		infra3v1.RunPostApplyDelete} {
 		addSidecar(&tf, taskName+"-fswatch", fswatchImageConfig, taskName, nil)
 	}
 
-	addTaskOption(&tf, tfv1beta1.TaskOption{
-		For: []tfv1beta1.TaskName{"*"},
+	addTaskOption(&tf, infra3v1.TaskOption{
+		For: []infra3v1.TaskName{"*"},
 		PolicyRules: []rbacv1.PolicyRule{
 			{
 				Verbs:     []string{"get"},
@@ -2067,7 +2067,7 @@ func applyOnCreateOrUpdate(ctx context.Context, tf tfv1beta1.Terraform, clientse
 
 	if isPatch {
 		log.Printf("Patching %s-%s %s/%s", tenantID, clusterName, tf.Namespace, tf.Name)
-		err = doPatch(&tf, ctx, tf.Name, tf.Namespace, vclusterTFOClient)
+		err = doPatch(&tf, ctx, tf.Name, tf.Namespace, vclusterInfra3Client)
 		if err != nil {
 			return fmt.Errorf("error occurred patching tf object: %v", err)
 			// continue
@@ -2076,7 +2076,7 @@ func applyOnCreateOrUpdate(ctx context.Context, tf tfv1beta1.Terraform, clientse
 		return nil
 	}
 
-	err = doCreate(tf, ctx, tf.Namespace, vclusterTFOClient)
+	err = doCreate(tf, ctx, tf.Namespace, vclusterInfra3Client)
 	log.Printf("Creating %s-%s %s/%s", tenantID, clusterName, tf.Namespace, tf.Name)
 	if err != nil {
 		return fmt.Errorf("error creating new tf resource: %v", err)
@@ -2085,9 +2085,9 @@ func applyOnCreateOrUpdate(ctx context.Context, tf tfv1beta1.Terraform, clientse
 	return nil
 }
 
-func addSidecar(tf *tfv1beta1.Terraform, name tfv1beta1.TaskName, imageConfig tfv1beta1.ImageConfig, task tfv1beta1.TaskName, taskOption *tfv1beta1.TaskOption) {
+func addSidecar(tf *infra3v1.Tf, name infra3v1.TaskName, imageConfig infra3v1.ImageConfig, task infra3v1.TaskName, taskOption *infra3v1.TaskOption) {
 	if tf.Spec.Plugins == nil {
-		tf.Spec.Plugins = make(map[tfv1beta1.TaskName]tfv1beta1.Plugin)
+		tf.Spec.Plugins = make(map[infra3v1.TaskName]infra3v1.Plugin)
 	}
 	for key := range tf.Spec.Plugins {
 		if key == name {
@@ -2095,7 +2095,7 @@ func addSidecar(tf *tfv1beta1.Terraform, name tfv1beta1.TaskName, imageConfig tf
 		}
 	}
 
-	tf.Spec.Plugins[name] = tfv1beta1.Plugin{
+	tf.Spec.Plugins[name] = infra3v1.Plugin{
 		ImageConfig: imageConfig,
 		When:        "Sidecar",
 		Task:        task,
@@ -2107,16 +2107,16 @@ func addSidecar(tf *tfv1beta1.Terraform, name tfv1beta1.TaskName, imageConfig tf
 	}
 }
 
-func addTaskOption(tf *tfv1beta1.Terraform, taskOption tfv1beta1.TaskOption) {
+func addTaskOption(tf *infra3v1.Tf, taskOption infra3v1.TaskOption) {
 	tf.Spec.TaskOptions = append(tf.Spec.TaskOptions, taskOption)
 }
 
-func patchableTFResource(obj *tfv1beta1.Terraform) []byte {
+func patchableTFResource(obj *infra3v1.Tf) []byte {
 	gvks, _, err := scheme.Scheme.ObjectKinds(obj)
 	if err != nil || len(gvks) == 0 {
 		obj.SetGroupVersionKind(schema.GroupVersionKind{
-			Group:   tfv1beta1.SchemeGroupVersion.Group,
-			Version: tfv1beta1.SchemeGroupVersion.Version,
+			Group:   infra3v1.SchemeGroupVersion.Group,
+			Version: infra3v1.SchemeGroupVersion.Version,
 			Kind:    "Terraform",
 		})
 	}
@@ -2126,16 +2126,16 @@ func patchableTFResource(obj *tfv1beta1.Terraform) []byte {
 	return buf.Bytes()
 }
 
-func doCreate(new tfv1beta1.Terraform, ctx context.Context, namespace string, client tfo.Interface) error {
-	_, err := client.TfV1beta1().Terraforms(namespace).Create(ctx, &new, metav1.CreateOptions{})
+func doCreate(new infra3v1.Tf, ctx context.Context, namespace string, client infra3clientset.Interface) error {
+	_, err := client.Infra3V1().Tves(namespace).Create(ctx, &new, metav1.CreateOptions{})
 	if err != nil {
 		return fmt.Errorf("an error occurred saving tf object: %v", err)
 	}
 	return nil
 }
 
-func doPatch(tf *tfv1beta1.Terraform, ctx context.Context, name, namespace string, client tfo.Interface) error {
-	_, err := client.TfV1beta1().Terraforms(namespace).Update(ctx, tf, metav1.UpdateOptions{})
+func doPatch(tf *infra3v1.Tf, ctx context.Context, name, namespace string, client infra3clientset.Interface) error {
+	_, err := client.Infra3V1().Tves(namespace).Update(ctx, tf, metav1.UpdateOptions{})
 	if err != nil {
 		return err
 	}

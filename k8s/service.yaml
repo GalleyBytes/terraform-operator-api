@@ -2,9 +2,9 @@ apiVersion: v1
 kind: Service
 metadata:
   labels:
-    service: terraform-operator
+    service: infra3
     component: api
-  name: terraform-operator-api
+  name: infra3-stella
   namespace: tf-system
 spec:
   ports:
@@ -13,6 +13,6 @@ spec:
     protocol: TCP
     targetPort: 5001
   selector:
-    service: terraform-operator
+    service: infra3
     component: api
   type: ClusterIP

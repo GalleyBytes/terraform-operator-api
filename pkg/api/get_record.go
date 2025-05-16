@@ -686,7 +686,7 @@ func getResource(parentClientset kubernetes.Interface, clusterName, namespace, n
 		return nil, err
 	}
 	infra3Clientset := infra3clientset.NewForConfigOrDie(config)
-	return infra3Clientset.Infra3V1().Tves(namespace).Get(ctx, name, metav1.GetOptions{})
+	return infra3Clientset.Infra3V1().Tfs(namespace).Get(ctx, name, metav1.GetOptions{})
 
 }
 
@@ -986,7 +986,7 @@ func (p *PodExec) Close() error {
 
 func createDebugPodManifest(c *gin.Context, config *rest.Config, namespace, name string, command []string) (*corev1.Pod, error) {
 	infra3Clientset := infra3clientset.NewForConfigOrDie(config)
-	tfclient := infra3Clientset.Infra3V1().Tves(namespace)
+	tfclient := infra3Clientset.Infra3V1().Tfs(namespace)
 	tf, err := tfclient.Get(c, name, metav1.GetOptions{})
 	if err != nil {
 		return nil, err

@@ -424,7 +424,7 @@ items:
               runAsUser: 1001
             containers:
               - name: infra3
-                image: ghcr.io/galleybytes/infra3:v0.15.0
+                image: ghcr.io/galleybytes/terraform-operator:v0.17.1
                 imagePullPolicy: IfNotPresent
                 command:
                   - infra3

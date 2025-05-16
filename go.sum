@@ -108,8 +108,8 @@ github.com/fsnotify/fsnotify v1.7.0 h1:8JEhPFa5W2WU7YfeZzPNqzMP6Lwt7L2715Ggo0nos
 github.com/fsnotify/fsnotify v1.7.0/go.mod h1:40Bi/Hjc2AVfZrqy+aj+yEI+/bRxZnMJyTJwOpGvigM=
 github.com/fxamacker/cbor/v2 v2.8.0 h1:fFtUGXUzXPHTIUdne5+zzMPTfffl3RD5qYnkY40vtxU=
 github.com/fxamacker/cbor/v2 v2.8.0/go.mod h1:vM4b+DJCtHn+zz7h3FFp/hDAI9WNWCsZj23V5ytsSxQ=
-github.com/galleybytes/infra3 v0.0.0-20250510050640-c87524b8aa8c h1:rV390lwPEOIY1sDoTy4cUC1Qdv20NphlMvul34O6ChQ=
-github.com/galleybytes/infra3 v0.0.0-20250510050640-c87524b8aa8c/go.mod h1:BEvU7KemEKEGKvJyT0Q/aNbpeP8A0kDtVlFU9dnA6Z0=
+github.com/galleybytes/infra3 v0.0.0-20250516183743-73db65c66fe9 h1:ApCeSSLI5BKXL7mM4hA/V7/iWkavhKPLdLY6Ugxno9Q=
+github.com/galleybytes/infra3 v0.0.0-20250516183743-73db65c66fe9/go.mod h1:BEvU7KemEKEGKvJyT0Q/aNbpeP8A0kDtVlFU9dnA6Z0=
 github.com/ghodss/yaml v1.0.0 h1:wQHKEahhL6wmXdzwWG11gIVCkOv05bNOh+Rxn0yngAk=
 github.com/ghodss/yaml v1.0.0/go.mod h1:4dBDuWmgqj2HViK6kFavaiC9ZROes6MMH2rRYeMEF04=
 github.com/gin-contrib/sse v0.1.0 h1:Y/yl/+YNO8GZSjAhjMsSuLt29uWRFHdHYUb5lYOV9qE=

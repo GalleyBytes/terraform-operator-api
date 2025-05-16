@@ -16,10 +16,10 @@ import (
 	"strings"
 	"time"
 
-	infra3v1 "github.com/galleybytes/infra3/pkg/apis/infra3/v1"
-	infra3clientset "github.com/galleybytes/infra3/pkg/client/clientset/versioned"
 	"github.com/galleybytes/infra3-stella/pkg/common/models"
 	"github.com/galleybytes/infra3-stella/pkg/util"
+	infra3v1 "github.com/galleybytes/infra3/pkg/apis/infra3/v1"
+	infra3clientset "github.com/galleybytes/infra3/pkg/client/clientset/versioned"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/gorilla/websocket"
@@ -315,7 +315,7 @@ func (h APIHandler) VClusterInfra3Health(c *gin.Context) {
 		return
 	}
 	infra3Clientset := infra3clientset.NewForConfigOrDie(config)
-	if _, err = infra3Clientset.Infra3V1().Tves("").List(c, metav1.ListOptions{}); err != nil {
+	if _, err = infra3Clientset.Infra3V1().Tfs("").List(c, metav1.ListOptions{}); err != nil {
 		// infra3 client cannot query crds and therefore infra3 health is not ready
 		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
 		return
@@ -364,7 +364,7 @@ func rerun(parentClientset kubernetes.Interface, clusterName, namespace, name, r
 		return err
 	}
 	infra3Clientset := infra3clientset.NewForConfigOrDie(config)
-	resource, err := infra3Clientset.Infra3V1().Tves(namespace).Get(ctx, name, metav1.GetOptions{})
+	resource, err := infra3Clientset.Infra3V1().Tfs(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err != nil {
 		return err
 	}
@@ -374,7 +374,7 @@ func rerun(parentClientset kubernetes.Interface, clusterName, namespace, name, r
 	}
 
 	resource.Labels["kubernetes.io/change-cause"] = fmt.Sprintf("%s-%s", rerunLabelValue, time.Now().Format("20060102150405"))
-	_, err = infra3Clientset.Infra3V1().Tves(namespace).Update(ctx, resource, metav1.UpdateOptions{})
+	_, err = infra3Clientset.Infra3V1().Tfs(namespace).Update(ctx, resource, metav1.UpdateOptions{})
 	if err != nil {
 		return err
 	}
@@ -1144,7 +1144,7 @@ func (h APIHandler) ResourcePoll(c *gin.Context) {
 	clientset := kubernetes.NewForConfigOrDie(config)
 
 	// Before checking for resources to return, check that the current generation has completed
-	tf, err := infra3Clientset.Infra3V1().Tves(namespace).Get(c, name, metav1.GetOptions{})
+	tf, err := infra3Clientset.Infra3V1().Tfs(namespace).Get(c, name, metav1.GetOptions{})
 	if err != nil {
 		c.JSON(http.StatusUnprocessableEntity, response(http.StatusUnprocessableEntity, err.Error(), nil))
 		return
@@ -2001,7 +2001,7 @@ func applyOnCreateOrUpdate(ctx context.Context, tf infra3v1.Tf, clientset kubern
 	tf.SetCreationTimestamp(metav1.Time{})
 
 	// Get a list of resources in the vcluster to see if the resource already exists to determines whether to patch or create.
-	tfs, err := vclusterInfra3Client.Infra3V1().Tves(tf.Namespace).List(ctx, metav1.ListOptions{})
+	tfs, err := vclusterInfra3Client.Infra3V1().Tfs(tf.Namespace).List(ctx, metav1.ListOptions{})
 	if err != nil {
 		return fmt.Errorf("error occurred listing tf objects in vcluster: %s", err)
 	}
@@ -2127,7 +2127,7 @@ func patchableTFResource(obj *infra3v1.Tf) []byte {
 }
 
 func doCreate(new infra3v1.Tf, ctx context.Context, namespace string, client infra3clientset.Interface) error {
-	_, err := client.Infra3V1().Tves(namespace).Create(ctx, &new, metav1.CreateOptions{})
+	_, err := client.Infra3V1().Tfs(namespace).Create(ctx, &new, metav1.CreateOptions{})
 	if err != nil {
 		return fmt.Errorf("an error occurred saving tf object: %v", err)
 	}
@@ -2135,7 +2135,7 @@ func doCreate(new infra3v1.Tf, ctx context.Context, namespace string, client inf
 }
 
 func doPatch(tf *infra3v1.Tf, ctx context.Context, name, namespace string, client infra3clientset.Interface) error {
-	_, err := client.Infra3V1().Tves(namespace).Update(ctx, tf, metav1.UpdateOptions{})
+	_, err := client.Infra3V1().Tfs(namespace).Update(ctx, tf, metav1.UpdateOptions{})
 	if err != nil {
 		return err
 	}

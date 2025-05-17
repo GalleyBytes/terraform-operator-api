@@ -269,7 +269,7 @@ items:
       apiVersion: v1
       kind: Namespace
       metadata:
-        name: tf-system
+        name: infra3-system
 
 
       ---
@@ -278,7 +278,7 @@ items:
       kind: ServiceAccount
       metadata:
         name: infra3
-        namespace: tf-system
+        namespace: infra3-system
 
 
       ---
@@ -363,7 +363,7 @@ items:
         - get
 
       - apiGroups:
-        - tf.galleybytes.com
+        - infra3.galleybytes.com
         resources:
         - '*'
         verbs:
@@ -388,7 +388,7 @@ items:
       subjects:
       - kind: ServiceAccount
         name: infra3
-        namespace: tf-system
+        namespace: infra3-system
       roleRef:
         kind: ClusterRole
         name: infra3
@@ -400,7 +400,7 @@ items:
       kind: Deployment
       metadata:
         name: infra3
-        namespace: tf-system
+        namespace: infra3-system
       spec:
         replicas: 1
         strategy:
@@ -424,7 +424,7 @@ items:
               runAsUser: 1001
             containers:
               - name: infra3
-                image: ghcr.io/galleybytes/terraform-operator:v0.17.1
+                image: ghcr.io/galleybytes/infra3:1.0.0-dev.1
                 imagePullPolicy: IfNotPresent
                 command:
                   - infra3

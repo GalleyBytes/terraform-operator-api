@@ -324,7 +324,7 @@ func (h APIHandler) VClusterInfra3Health(c *gin.Context) {
 	// Following checks if infra3 is running. TFO must be installed similar to the bundled packages in the
 	// infra3 github repo.
 	clientset := kubernetes.NewForConfigOrDie(config)
-	n, err := clientset.CoreV1().Pods("tf-system").List(c, metav1.ListOptions{
+	n, err := clientset.CoreV1().Pods("infra3-system").List(c, metav1.ListOptions{
 		LabelSelector: "app=infra3,component=controller",
 		FieldSelector: "status.phase=Running",
 	})

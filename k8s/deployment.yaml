@@ -31,7 +31,7 @@ spec:
           value: isa
         - name: ADMIN_PASSWORD
           value: $2a$10$2ap6bphr5ZBkEMTBb/ZoT.zrY7lUwzCW2u1n5tIeVugtVpjMRW9Fe
-        image: ghcr.io/galleybytes/infra3-stella:0.0.0
+        image: ghcr.io/galleybytes/infrakube-stella:0.0.0
         imagePullPolicy: IfNotPresent
         name: api
         ports:

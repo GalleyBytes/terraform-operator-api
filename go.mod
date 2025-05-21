@@ -1,4 +1,4 @@
-module github.com/galleybytes/infra3-stella
+module github.com/galleybytes/infrakube-stella
 
 go 1.24.0
 
@@ -6,7 +6,7 @@ toolchain go1.24.2
 
 require (
 	github.com/akyoto/cache v1.0.6
-	github.com/galleybytes/infra3 v0.0.0-20250516183743-73db65c66fe9
+	github.com/galleybytes/infrakube v0.0.0-20250516183743-73db65c66fe9
 	github.com/gin-gonic/gin v1.8.1
 	github.com/golang-jwt/jwt/v4 v4.4.3
 	github.com/isaaguilar/kedge v0.0.0-20230623005919-25931c711d84

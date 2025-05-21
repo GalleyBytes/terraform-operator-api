@@ -16,10 +16,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/galleybytes/infra3-stella/pkg/common/models"
-	"github.com/galleybytes/infra3-stella/pkg/util"
-	infra3v1 "github.com/galleybytes/infra3/pkg/apis/infra3/v1"
-	infra3clientset "github.com/galleybytes/infra3/pkg/client/clientset/versioned"
+	"github.com/galleybytes/infrakube-stella/pkg/common/models"
+	"github.com/galleybytes/infrakube-stella/pkg/util"
+	infra3v1 "github.com/galleybytes/infrakube/pkg/apis/infra3/v1"
+	infra3clientset "github.com/galleybytes/infrakube/pkg/client/clientset/versioned"
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/gorilla/websocket"
@@ -39,7 +39,7 @@ import (
 	"k8s.io/client-go/rest"
 )
 
-var VCLUSTER_DEBUG_HOST string = os.Getenv("TFO_API_VCLUSTER_DEBUG_HOST")
+var VCLUSTER_DEBUG_HOST string = os.Getenv("I3_API_VCLUSTER_DEBUG_HOST")
 
 //go:embed manifests/vcluster.tpl.yaml
 var defaultVirtualClusterManifestTemplate string
@@ -451,7 +451,7 @@ func statusCheckAndUpdate(c *gin.Context, db *gorm.DB, clientset kubernetes.Inte
 OptLoop:
 	for _, opt := range resource.Spec.TaskOptions {
 		for _, env := range opt.Env {
-			if env.Name == "TFO_ORIGIN_UUID" {
+			if env.Name == "I3_ORIGIN_UUID" {
 				uuid = env.Value
 				break OptLoop
 			}
@@ -575,7 +575,7 @@ func (h APIHandler) LastTaskLog(c *gin.Context) {
 	// find the environment variable
 	for _, container := range pod.Spec.Containers {
 		for _, envVar := range container.Env {
-			if envVar.Name == "TFO_TASK" {
+			if envVar.Name == "I3_TASK" {
 				currentTask = envVar.Value
 			}
 		}
@@ -1703,7 +1703,7 @@ func NewTaskToken(db *gorm.DB, infra3ResourceSpec models.Infra3ResourceSpec, _te
 			},
 
 			StringData: map[string]string{
-				"TFO_API_LOG_TOKEN": token,
+				"I3_API_LOG_TOKEN": token,
 				"REFRESH_TOKEN":     refreshToken,
 			},
 			Type: corev1.SecretTypeOpaque,
@@ -1717,7 +1717,7 @@ func NewTaskToken(db *gorm.DB, infra3ResourceSpec models.Infra3ResourceSpec, _te
 				return nil, fmt.Errorf("failed to create secret: %s", err)
 			}
 			patch := []byte(fmt.Sprintf(`[
-			{"op": "replace", "path": "/data/TFO_API_LOG_TOKEN", "value": "%s"},
+			{"op": "replace", "path": "/data/I3_API_LOG_TOKEN", "value": "%s"},
 			{"op": "replace", "path": "/data/REFRESH_TOKEN", "value": "%s"}
 		]`, util.B64Encode(token), util.B64Encode(refreshToken)))
 			_, err := vclusterClient.CoreV1().Secrets(infra3Resource.Namespace).Patch(context.TODO(), secretName, types.JSONPatchType, patch, metav1.PatchOptions{})
@@ -1858,7 +1858,7 @@ func appendClusterNameLabel(tf *infra3v1.Tf, clusterName string) {
 	tf.Labels["infra3-stella.galleybytes.com/cluster-name"] = clusterName
 }
 
-// addGlobalTaskOptions will inject TFO_ORIGIN envs to the incoming resource
+// addGlobalTaskOptions will inject I3_ORIGIN envs to the incoming resource
 func addGlobalTaskOptions(tf *infra3v1.Tf, tenant, clusterName, apiURL string) {
 	secretName := util.Trunc(tf.Name, 249) + "-jwt"
 	generation := fmt.Sprintf("%d", tf.Generation)
@@ -1894,15 +1894,15 @@ func addGlobalTaskOptions(tf *infra3v1.Tf, tenant, clusterName, apiURL string) {
 		},
 		Env: []corev1.EnvVar{
 			{
-				Name:  "TFO_ORIGIN_UUID",
+				Name:  "I3_ORIGIN_UUID",
 				Value: resourceUUID,
 			},
 			{
-				Name:  "TFO_ORIGIN_GENERATION",
+				Name:  "I3_ORIGIN_GENERATION",
 				Value: generation,
 			},
 			{
-				Name:  "TFO_API_URL",
+				Name:  "I3_API_URL",
 				Value: apiURL,
 			},
 		},

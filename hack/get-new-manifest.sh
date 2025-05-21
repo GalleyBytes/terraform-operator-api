@@ -1,7 +1,7 @@
 #!/bin/bash
 
 OUTPUT_FILE="$(mktemp)"
-TFO_BUNDLE="$(mktemp)"
+I3_BUNDLE="$(mktemp)"
 
 printf 'apiVersion: v1
 kind: List
@@ -18,12 +18,12 @@ helm template infra3-virtual-cluster vcluster --repo https://charts.loft.sh -n n
     sed "s/^  #/- #/g" >>"$OUTPUT_FILE"
 
 curl -s https://raw.githubusercontent.com/GalleyBytes/infra3/master/deploy/bundles/vTBD/vTBD.yaml |
-    sed "s/^/      /g" >"$TFO_BUNDLE"
+    sed "s/^/      /g" >"$I3_BUNDLE"
 
 
 
 printf "
-📄\tTFO bundle saved at $TFO_BUNDLE
+📄\tTFO bundle saved at $I3_BUNDLE
 
 📑\tVCluster manifest saved at $OUTPUT_FILE
 

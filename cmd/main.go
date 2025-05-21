@@ -8,8 +8,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/galleybytes/infra3-stella/pkg/api"
-	"github.com/galleybytes/infra3-stella/pkg/common/db"
+	"github.com/galleybytes/infrakube-stella/pkg/api"
+	"github.com/galleybytes/infrakube-stella/pkg/common/db"
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 	"gorm.io/gorm"
@@ -61,7 +61,7 @@ func main() {
 	viper.BindPFlag("service-name", pflag.Lookup("service-name"))
 	pflag.StringVar(&dashboard, "dashboard", "", "Connect to the dashboard with api credentials")
 	viper.BindPFlag("dashboard", pflag.Lookup("dashboard"))
-	pflag.StringVar(&fswatchImage, "fswatch-image", "ghcr.io/galleybytes/fswatch:0.11.0", "Docker image for fswatch (log-service)")
+	pflag.StringVar(&fswatchImage, "fswatch-image", "ghcr.io/galleybytes/fswatch:1.0.0-dev.1", "Docker image for fswatch (log-service)")
 	viper.BindPFlag("fswatch-image", pflag.Lookup("fswatch-image"))
 	pflag.Parse()
 

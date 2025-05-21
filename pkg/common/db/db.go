@@ -3,7 +3,7 @@ package db
 import (
 	"log"
 
-	"github.com/galleybytes/infra3-stella/pkg/common/models"
+	"github.com/galleybytes/infrakube-stella/pkg/common/models"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )

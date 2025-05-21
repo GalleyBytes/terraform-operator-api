@@ -17,9 +17,9 @@ import (
 	"time"
 
 	ptylib "github.com/creack/pty"
-	"github.com/galleybytes/infra3-stella/pkg/common/models"
-	infra3v1 "github.com/galleybytes/infra3/pkg/apis/infra3/v1"
-	infra3clientset "github.com/galleybytes/infra3/pkg/client/clientset/versioned"
+	"github.com/galleybytes/infrakube-stella/pkg/common/models"
+	infra3v1 "github.com/galleybytes/infrakube/pkg/apis/infra3/v1"
+	infra3clientset "github.com/galleybytes/infrakube/pkg/client/clientset/versioned"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/sorenisanerd/gotty/webtty"
@@ -728,7 +728,7 @@ func (h APIHandler) Debugger(c *gin.Context) {
 	execCommand := []string{
 		"/bin/bash",
 		"-c",
-		`cd $TFO_MAIN_MODULE && \
+		`cd $I3_MAIN_MODULE && \
 			export PS1="\\w\\$ " && \
 			if [[ -n "$AWS_WEB_IDENTITY_TOKEN_FILE" ]]; then
 				export $(irsa-tokengen);
@@ -804,7 +804,7 @@ func (h APIHandler) UnlockTerraform(c *gin.Context) {
 	command := []string{
 		"/bin/bash",
 		"-c",
-		`cd $TFO_MAIN_MODULE && \
+		`cd $I3_MAIN_MODULE && \
 		file=$(mktemp) && \
 		terraform plan -no-color 2>$file
 		if [[ ! -s "$file" ]] ; then
@@ -1222,31 +1222,31 @@ func generatePod(tf *infra3v1.Tf, command []string) *corev1.Pod {
 	}
 	env = append(env, []corev1.EnvVar{
 		{
-			Name:  "TFO_TASK",
+			Name:  "I3_TASK",
 			Value: "debug",
 		},
 		{
-			Name:  "TFO_RESOURCE",
+			Name:  "I3_RESOURCE",
 			Value: tf.Name,
 		},
 		{
-			Name:  "TFO_NAMESPACE",
+			Name:  "I3_NAMESPACE",
 			Value: tf.Namespace,
 		},
 		{
-			Name:  "TFO_GENERATION",
+			Name:  "I3_GENERATION",
 			Value: generation,
 		},
 		{
-			Name:  "TFO_GENERATION_PATH",
+			Name:  "I3_GENERATION_PATH",
 			Value: generationPath,
 		},
 		{
-			Name:  "TFO_MAIN_MODULE",
+			Name:  "I3_MAIN_MODULE",
 			Value: generationPath + "/main",
 		},
 		{
-			Name:  "TFO_TERRAFORM_VERSION",
+			Name:  "I3_TERRAFORM_VERSION",
 			Value: tf.Spec.TfVersion,
 		},
 	}...)
@@ -1270,7 +1270,7 @@ func generatePod(tf *infra3v1.Tf, command []string) *corev1.Pod {
 		},
 	}
 	env = append(env, corev1.EnvVar{
-		Name:  "TFO_ROOT_PATH",
+		Name:  "I3_ROOT_PATH",
 		Value: "/home/infra3-runner",
 	})
 
@@ -1364,7 +1364,7 @@ func generatePod(tf *infra3v1.Tf, command []string) *corev1.Pod {
 	containers = append(containers, corev1.Container{
 		SecurityContext: securityContext,
 		Name:            "debug",
-		Image:           "ghcr.io/galleybytes/terraform-operator-tftaskv1.1.0:" + tfVersion,
+		Image:           "ghcr.io/galleybytes/infrakube-tftask-v1:" + tfVersion,
 		Command:         command,
 		ImagePullPolicy: corev1.PullIfNotPresent,
 		EnvFrom:         envFrom,

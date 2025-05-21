@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/galleybytes/infra3-stella/pkg/common/models"
+	"github.com/galleybytes/infrakube-stella/pkg/common/models"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )

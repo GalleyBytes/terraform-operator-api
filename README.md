@@ -72,10 +72,10 @@ Export environment variables for the API server:
 export KUBECONFIG=~/.kube/config
 export ADMIN_USERNAME=user
 export ADMIN_PASSWORD='$2a$12$K.Hqh3sdBkdsnrA5zDuJLeMEoNclejP9UZjzxE6KpmsjQ4f01UdT.' # password
-export TFO_API_VCLUSTER_DEBUG_HOST=127.0.0.1:8443
+export I3_API_VCLUSTER_DEBUG_HOST=127.0.0.1:8443
 ```
 
-> :warning:  __Note on the env var `TFO_API_VCLUSTER_DEBUG_HOST`__ 
+> :warning:  __Note on the env var `I3_API_VCLUSTER_DEBUG_HOST`__ 
 > When first starting the API server for the first time, there is no vcluster.  First start the `terraform-operator-remote-controller` Next, port-forward the vcluster that gets created.
 
 __Start the API Server__
@@ -95,11 +95,11 @@ Export the environment variables that will allow the remote controller to connec
 ```bash
 export KUBECONFIG=~/.kube/config
 export CLIENT_NAME=docker-desktop
-export TFO_API_PROTOCOL=http
-export TFO_API_HOST=localhost
-export TFO_API_PORT=3000
-export TFO_API_LOGIN_USER=user
-export TFO_API_LOGIN_PASSWORD=password
+export I3_API_PROTOCOL=http
+export I3_API_HOST=localhost
+export I3_API_PORT=3000
+export I3_API_LOGIN_USER=user
+export I3_API_LOGIN_PASSWORD=password
 ```
 
 __Start the Remote Controller__

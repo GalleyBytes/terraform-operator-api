@@ -424,7 +424,7 @@ items:
               runAsUser: 1001
             containers:
               - name: infra3
-                image: ghcr.io/galleybytes/infrakube:1.0.0-dev.4
+                image: ghcr.io/galleybytes/infrakube:1.0.0-dev.5
                 imagePullPolicy: IfNotPresent
                 command:
                   - infra3

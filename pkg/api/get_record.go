@@ -1203,7 +1203,7 @@ func generatePod(tf *infra3v1.Tf, command []string) *corev1.Pod {
 	generation := fmt.Sprint(tf.Generation)
 	versionedName := tf.Status.PodNamePrefix + "-v" + generation
 	generateName := versionedName + "-debug-"
-	generationPath := "/home/infra3-runner/generations/" + generation
+	generationPath := "/home/i3-runner/generations/" + generation
 	env := []corev1.EnvVar{}
 	envFrom := []corev1.EnvFromSource{}
 	annotations := make(map[string]string)
@@ -1265,13 +1265,13 @@ func generatePod(tf *infra3v1.Tf, command []string) *corev1.Pod {
 	volumeMounts := []corev1.VolumeMount{
 		{
 			Name:      "infra3home",
-			MountPath: "/home/infra3-runner",
+			MountPath: "/home/i3-runner",
 			ReadOnly:  false,
 		},
 	}
 	env = append(env, corev1.EnvVar{
 		Name:  "I3_ROOT_PATH",
-		Value: "/home/infra3-runner",
+		Value: "/home/i3-runner",
 	})
 
 	optional := true
